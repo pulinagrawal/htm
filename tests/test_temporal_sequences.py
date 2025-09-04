@@ -3,7 +3,7 @@ import numpy as np
 import sys
 import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from HTM import TemporalPooler
+from htm import TemporalPooler
 
 
 def test_multi_field_input_equivalence():

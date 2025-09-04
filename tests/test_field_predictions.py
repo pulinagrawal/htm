@@ -2,7 +2,7 @@ import sys
 import pathlib
 import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from HTM import TemporalPooler
+from htm import TemporalPooler
 
 
 def test_dict_field_prediction_filtering():
