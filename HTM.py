@@ -1,4 +1,16 @@
+from __future__ import annotations
+
 import numpy as np
+import random
+from typing import (
+    List,
+    Set,
+    Dict,
+    Tuple,
+    Optional,
+    Sequence,
+    Union,
+)
 
 # Constants (Spatial Pooler)
 CONNECTED_PERM = 0.5  # Permanence threshold for an input synapse to be considered connected
@@ -18,63 +30,125 @@ input_space_size = 100
 
 # Cell class represents a single cell in a column
 class Cell:
-    def __init__(self):
-        # Distal segments for temporal memory
-        self.segments = []  # Initially empty; segments created during bursting learning
+    """Single cell within a column.
 
-    def __repr__(self):  # Helpful for debugging / tests
+    Holds a (possibly empty) list of distal segments used for Temporal Memory.
+    """
+
+    segments: List[Segment]  # defined after Segment class; forward-referenced via __future__ import
+
+    def __init__(self) -> None:
+        # Distal segments for temporal memory
+        self.segments = []
+
+    def __repr__(self) -> str:  # Helpful for debugging / tests
         return f"Cell(id={id(self)})"
 
 
 class DistalSynapse:
-    """Distal synapse referencing a source cell (temporal memory)."""
-    def __init__(self, source_cell, permanence):
+    """Distal synapse referencing a source cell (Temporal Memory)."""
+
+    source_cell: Cell
+    permanence: float
+
+    def __init__(self, source_cell: Cell, permanence: float) -> None:
         self.source_cell = source_cell
         self.permanence = permanence
 
 
 class Segment:
-    def __init__(self, synapses=None):
-        self.synapses = synapses if synapses is not None else []  # List[DistalSynapse]
+    """Distal segment composed of synapses to previously active cells."""
+
+    synapses: List[DistalSynapse]
+    sequence_segment: bool
+
+    def __init__(self, synapses: Optional[List[DistalSynapse]] = None) -> None:
+        self.synapses = synapses if synapses is not None else []
         self.sequence_segment = False  # True if learned in a predictive context
 
-    def active_synapses(self, active_cells):
+    def active_synapses(self, active_cells: Set[Cell]) -> List[DistalSynapse]:
+        """Return connected synapses whose source cell is active."""
         return [syn for syn in self.synapses if syn.source_cell in active_cells and syn.permanence > CONNECTED_PERM]
 
-    def matching_synapses(self, prev_active_cells):  # includes synapses even if below connection threshold
+    def matching_synapses(self, prev_active_cells: Set[Cell]) -> List[DistalSynapse]:
+        """Return synapses whose source cell was previously active (ignores permanence threshold)."""
         return [syn for syn in self.synapses if syn.source_cell in prev_active_cells]
 
 # Synapse class represents a synapse which connects a segment to a source input
 class Synapse:
     """Proximal synapse (input space) used by Spatial Pooler only."""
-    def __init__(self, source_input, permanence):
+
+    source_input: int
+    permanence: float
+
+    def __init__(self, source_input: int, permanence: float) -> None:
         self.source_input = source_input
         self.permanence = permanence
 
 # Column class represents a column in the HTM Region
 class Column:
-    def __init__(self, potential_synapses, position):
-        self.position = position
-        self.potential_synapses = potential_synapses  # List of potential synapses for the column
-        self.boost = 1  # Boost factor for column activity
-        self.active_duty_cycle = 0
-        self.overlap_duty_cycle = 0
-        self.min_duty_cycle = 0.01  # Minimum desired firing rate for a column
-        # Connected synapses are those whose permanence value is above the threshold
-        self.connected_synapses = [s for s in potential_synapses if s.permanence > CONNECTED_PERM]
-        self.overlap = 0  # Overlap of column with the current input
+    position: Tuple[int, int]
+    potential_synapses: List[Synapse]
+    boost: float
+    active_duty_cycle: float
+    overlap_duty_cycle: float
+    min_duty_cycle: float
+    connected_synapses: List[Synapse]
+    overlap: float
+    cells: List[Cell]  # added dynamically after region init
 
-    # Computes the overlap of the column with the current input and applies boosting
-    def compute_overlap(self, input_vector):
+    def __init__(self, potential_synapses: List[Synapse], position: Tuple[int, int]):
+        self.position = position
+        self.potential_synapses = potential_synapses
+        self.boost = 1.0
+        self.active_duty_cycle = 0.0
+        self.overlap_duty_cycle = 0.0
+        self.min_duty_cycle = 0.01
+        self.connected_synapses = [s for s in potential_synapses if s.permanence > CONNECTED_PERM]
+        self.overlap = 0.0
+
+    def compute_overlap(self, input_vector: np.ndarray) -> None:
+        """Compute overlap with current binary input vector and apply boost."""
         overlap = sum(1 for s in self.connected_synapses if input_vector[s.source_input])
-        self.overlap = overlap * self.boost if overlap >= MIN_OVERLAP else 0
+        self.overlap = float(overlap * self.boost) if overlap >= MIN_OVERLAP else 0.0
         print(f"Column at position {self.position} has overlap: {self.overlap}")
         
 print("Starting the Temporal Pooler process...")        
 
 class TemporalPooler:
-    def __init__(self, input_space_size, column_count, cells_per_column, initial_synapses_per_column):
-        # Spatial Pooler region (proximal synapses)
+    """Prototype Spatial Pooler + simplified Temporal Memory.
+
+    Type hints approximate container contents; algorithmic logic is unchanged.
+    """
+
+    input_space_size: int
+    columns: List[Column]
+    cells_per_column: int
+    active_cells: Dict[int, Set[Cell]]
+    winner_cells: Dict[int, Set[Cell]]
+    predictive_cells: Dict[int, Set[Cell]]
+    learning_segments: Dict[int, Set[Segment]]
+    negative_segments: Dict[int, Set[Segment]]
+    field_ranges: Dict[str, Tuple[int, int]]
+    field_order: List[str]
+    column_field_map: Dict[Column, Optional[str]]
+
+    # Input variants accepted by compute_active_columns
+    InputField = Union[np.ndarray, Sequence[int]]
+    InputComposite = Union[
+        np.ndarray,
+        Sequence[int],
+        Sequence[InputField],
+        Dict[str, InputField],
+    ]
+
+    def __init__(
+        self,
+        input_space_size: int,
+        column_count: int,
+        cells_per_column: int,
+        initial_synapses_per_column: int,
+    ) -> None:
         self.input_space_size = input_space_size
         self.columns = self.initialize_region(input_space_size, column_count, initial_synapses_per_column)
         self.cells_per_column = cells_per_column
@@ -82,32 +156,44 @@ class TemporalPooler:
             c.cells = [Cell() for _ in range(cells_per_column)]
 
         # Temporal Memory state (time-indexed)
-        self.active_cells = {}        # t -> set of active cells
-        self.winner_cells = {}        # t -> set of winner cells (cells chosen for learning in each active column)
-        self.predictive_cells = {}    # t -> set of predictive cells (predicting activation at t+1)
-        self.learning_segments = {}   # t -> set of segments selected for positive learning
-        self.negative_segments = {}   # t -> set of segments to punish (predicted but column inactive)
+        self.active_cells = {}
+        self.winner_cells = {}
+        self.predictive_cells = {}
+        self.learning_segments = {}
+        self.negative_segments = {}
         # Multi-field metadata
-        self.field_ranges = {}  # name -> (start_index, end_index) half-open
-        self.field_order = []   # preserve order for reconstruction
-        self.column_field_map = {}  # column -> dominant field name
+        self.field_ranges = {}
+        self.field_order = []
+        self.column_field_map = {}
 
     # Initializes the columns in the region
-    def initialize_region(self, input_space_size, column_count, initial_synapses_per_column):
-        columns = []
-        grid_size = int(column_count ** 0.5)  # Assuming a square grid for simplicit
+    def initialize_region(
+        self,
+        input_space_size: int,
+        column_count: int,
+        initial_synapses_per_column: int,
+    ) -> List[Column]:
+        columns: List[Column] = []
+        grid_size = int(column_count ** 0.5)  # Assuming a square grid for simplicity
         for i in range(column_count):
             x = i % grid_size
             y = i // grid_size
             position = (x, y)
-            potential_synapses = [Synapse(np.random.randint(input_space_size), np.random.uniform(0.4, 0.6)) for _ in range(initial_synapses_per_column)]
-            columns.append(Column(potential_synapses, position))  # Pass position when creating a Column
+            potential_synapses = [
+                Synapse(int(np.random.randint(input_space_size)), float(np.random.uniform(0.4, 0.6)))
+                for _ in range(initial_synapses_per_column)
+            ]
+            columns.append(Column(potential_synapses, position))
         print(f"Initialized {len(columns)} columns with positions and potential synapses.")
         return columns
         
 
     # Computes the active columns after applying inhibition
-    def compute_active_columns(self, input_vector, inhibition_radius):
+    def compute_active_columns(
+        self,
+        input_vector: InputComposite,
+        inhibition_radius: float,
+    ) -> List[Column]:
         """Compute active columns from a single input vector OR multiple coding fields.
         Accepts either:
           - 1D numpy array / list of ints (binary)
@@ -142,7 +228,7 @@ class TemporalPooler:
         print(f"Computed active columns. Total active columns: {len(active_columns)}")
         return active_columns
 
-    def _combine_input_fields(self, input_vector):
+    def _combine_input_fields(self, input_vector: InputComposite) -> np.ndarray:
         """Internal helper: if input_vector is a list/tuple of fields, concatenate.
         Also allows a dict of name -> field which records field ranges.
         Ensures binary int np array output."""
@@ -169,7 +255,7 @@ class TemporalPooler:
             return np.concatenate(arrays) if arrays else np.array([], dtype=int)
         return np.asarray(input_vector, dtype=int)
 
-    def _assign_column_fields(self):
+    def _assign_column_fields(self) -> None:
         """Assign each column a dominant field based on connected synapse source indices.
         Dominant field = field with largest count of connected synapse inputs.
         Ties broken by earliest field order. Stores mapping in self.column_field_map."""
@@ -192,7 +278,7 @@ class TemporalPooler:
                 self.column_field_map[col] = None
     
     # --------------------- Temporal Memory Core ---------------------
-    def compute_active_state(self, active_columns, t):
+    def compute_active_state(self, active_columns: Sequence[Column], t: int) -> None:
         """Compute active & winner cells at time t using predictive cells from t-1.
         If a column was predicted (one or more predictive cells at t-1) only those predictive cells become active.
         Otherwise the column bursts (all cells active) and we pick a learning cell (winner cell)."""
@@ -233,7 +319,7 @@ class TemporalPooler:
         self.learning_segments[t] = learning_segments_t
         print(f"Active state computed for time step {t}: {len(active_cells_t)} cells active.")
 
-    def compute_predictive_state(self, t):
+    def compute_predictive_state(self, t: int) -> None:
         """Compute predictive cells for next time based on segments active at time t.
         A segment is active if it has enough active connected synapses whose source cells are active at t."""
         active_cells_t = self.active_cells.get(t, set())
@@ -247,7 +333,11 @@ class TemporalPooler:
         self.predictive_cells[t] = predictive_cells_t
         print(f"Predictive state computed for time step {t}: {len(predictive_cells_t)} cells predictive.")
 
-    def get_predictive_columns(self, t=None, field_name=None):
+    def get_predictive_columns(
+        self,
+        t: Optional[int] = None,
+        field_name: Optional[str] = None,
+    ) -> Set[Column]:
         """Return predicted columns.
 
         Parameters:
@@ -282,7 +372,7 @@ class TemporalPooler:
             cols = {c for c in cols if self.column_field_map.get(c) == field_name}
         return cols
 
-    def reset_state(self):
+    def reset_state(self) -> None:
         """Reset transient temporal memory state (cells' learned segments remain)."""
         self.active_cells = {}
         self.winner_cells = {}
@@ -290,7 +380,7 @@ class TemporalPooler:
         self.learning_segments = {}
         self.negative_segments = {}
 
-    def learn(self, t):
+    def learn(self, t: int) -> None:
         """Apply learning updates after computing active and predictive states at time t.
         - Reinforce learning segments for winner cells (positive).
         - Punish segments that predicted (at t-1) but whose columns did not become active (negative)."""
@@ -315,7 +405,7 @@ class TemporalPooler:
         print(f"Learning applied at time {t}: +{len(self.learning_segments.get(t, set()))} / -{len(negative_segments)} segments.")
 
     # --------------------- Helper Methods (TM) ---------------------
-    def best_matching_cell(self, column, prev_t):
+    def best_matching_cell(self, column: Column, prev_t: int) -> Tuple[Optional[Cell], Optional[Segment]]:
         prev_active_cells = self.active_cells.get(prev_t, set())
         best_cell = None
         best_segment = None
@@ -336,7 +426,7 @@ class TemporalPooler:
                     best_segment = seg
         return best_cell, best_segment
 
-    def active_segments_of(self, cell, t):
+    def active_segments_of(self, cell: Cell, t: int) -> List[Segment]:
         prev_active_cells = self.active_cells.get(t, set())
         active_list = []
         for seg in cell.segments:
@@ -344,7 +434,7 @@ class TemporalPooler:
                 active_list.append(seg)
         return active_list
 
-    def reinforce_segment(self, segment, t):
+    def reinforce_segment(self, segment: Segment, t: int) -> None:
         prev_active_cells = self.active_cells.get(t-1, set())
         # Strengthen existing active synapses
         for syn in segment.synapses:
@@ -355,20 +445,20 @@ class TemporalPooler:
         # Grow new synapses (sample from prev active cells not already connected)
         existing_sources = {syn.source_cell for syn in segment.synapses}
         candidates = [c for c in prev_active_cells if c not in existing_sources]
-        np.random.shuffle(candidates)
+        random.shuffle(candidates)
         for cell_src in candidates[:NEW_SYNAPSE_MAX]:
             segment.synapses.append(DistalSynapse(cell_src, INITIAL_DISTAL_PERM))
         segment.sequence_segment = True
 
-    def punish_segment(self, segment, t):
+    def punish_segment(self, segment: Segment, t: int) -> None:
         for syn in segment.synapses:
             syn.permanence = max(0.0, syn.permanence - PERMANENCE_DEC)
 
 
 
     # Applies inhibition to determine which columns will become active
-    def inhibition(self, columns, inhibition_radius):
-        active_columns = []
+    def inhibition(self, columns: Sequence[Column], inhibition_radius: float) -> List[Column]:
+        active_columns: List[Column] = []
         for c in columns:
         # Find neighbors of column c
             neighbors = [c2 for c2 in columns if c != c2 and self.euclidean_distance(c.position, c2.position) <= inhibition_radius]
@@ -378,13 +468,13 @@ class TemporalPooler:
         print(f"After inhibition, active columns: {[c.position for c in active_columns]}")
         return active_columns
 
-    def euclidean_distance(self, pos1, pos2):
-    # Calculate the Euclidean distance between two points (pos1 and pos2)
-        return np.linalg.norm(np.array(pos1) - np.array(pos2))
+    def euclidean_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+        """Calculate the Euclidean distance between two points."""
+        return float(np.linalg.norm(np.array(pos1) - np.array(pos2)))
 
 
     # Returns the k-th highest overlap value from a list of columns
-    def kth_score(self, neighbors, k):
+    def kth_score(self, neighbors: Sequence[Column], k: int) -> float:
         if not neighbors:
             return 0
         ordered = sorted(neighbors, key=lambda x: x.overlap, reverse=True)
@@ -392,15 +482,16 @@ class TemporalPooler:
             return 0
         if k > len(ordered):
             # If fewer neighbors than desired local activity, use lowest neighbor overlap
-            return ordered[-1].overlap if ordered else 0
-        return ordered[k-1].overlap
+            return float(ordered[-1].overlap) if ordered else 0.0
+        return float(ordered[k-1].overlap)
 
 
     # Removed legacy helper methods tied to old temporal representation.
 
 
     
-    def learning_phase(self, active_columns, input_vector):                                   # Learning for Spatial Pooler (unchanged)
+    def learning_phase(self, active_columns: Sequence[Column], input_vector: np.ndarray) -> None:
+        """Spatial Pooler permanence adaptation for currently active columns."""
         for c in active_columns:
             for s in c.potential_synapses:
                 if input_vector[s.source_input]:
@@ -413,7 +504,7 @@ class TemporalPooler:
         # Could update inhibition radius if implementing adaptive inhibition.
         _ = self.average_receptive_field_size(self.columns)
 
-    def average_receptive_field_size(self, columns):
+    def average_receptive_field_size(self, columns: Sequence[Column]) -> float:
         total_receptive_field_size = 0
         count = 0
         for c in columns:
@@ -422,13 +513,9 @@ class TemporalPooler:
                 receptive_field_size = max(connected_positions) - min(connected_positions)
                 total_receptive_field_size += receptive_field_size
                 count += 1
-        return total_receptive_field_size / count if count > 0 else 0
+        return total_receptive_field_size / count if count > 0 else 0.0
     
-
-
-
-if __name__ == "__main__":
-    # Example usage of combined Spatial Pooler + revised Temporal Memory
+if __name__ == "__main__":  # Optional manual smoke usage placeholder
     input_space_size = 100
     column_count = 256  # reduced for demo runtime
     cells_per_column = 8
