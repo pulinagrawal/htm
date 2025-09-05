@@ -35,13 +35,12 @@ class Cell:
     Holds a (possibly empty) list of distal segments used for Temporal Memory.
     """
 
-    segments: List[Segment]  # defined after Segment class; forward-referenced via __future__ import
+    segments: List['Segment']  # forward reference
 
     def __init__(self) -> None:
-        # Distal segments for temporal memory
         self.segments = []
 
-    def __repr__(self) -> str:  # Helpful for debugging / tests
+    def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
 
 
@@ -194,49 +193,38 @@ class TemporalPooler:
         input_vector: InputComposite,
         inhibition_radius: float,
     ) -> List[Column]:
-        """Compute active columns from a single input vector OR multiple coding fields.
-        Accepts either:
-          - 1D numpy array / list of ints (binary)
-          - list/tuple of such arrays representing distinct coding fields which will
-            be concatenated internally into a single input space.
-          - dict mapping field name -> array, concatenated in insertion order; field
-            name / ranges stored for later filtering of predictive columns.
-        NOTE: To use multiple fields reliably, initialize the TemporalPooler with
-        input_space_size equal to the concatenated length of all fields that will
-        be supplied, OR only supply fields whose total length equals the original
-        size. A ValueError is raised otherwise.
+        """Compute active columns from an input (single or multi-field).
+
+        This method now delegates input preparation (concatenation & field metadata
+        handling) to `combine_input_fields` so that callers (or the new `run` helper)
+        can reuse that logic independently of spatial processing.
         """
-        combined = self._combine_input_fields(input_vector)
-        if combined.shape[0] != self.input_space_size:
-            raise ValueError(
-                f"Combined input length {combined.shape[0]} != configured input_space_size {self.input_space_size}."
-            )
-        # If dictionary-based input used, (re)assign column field ownership
-        if self.field_ranges and any(len(rg) != 2 for rg in self.field_ranges.values()):
-            # Defensive: ensure structure is consistent (should not happen), reset
-            self.field_ranges = {}
-            self.field_order = []
-        if self.field_ranges:
-            # field metadata already exists; if new dict with different structure passed later, user should reset state.
-            pass
-        # Build / update column->field mapping if we have field metadata and haven't assigned yet
-        if self.field_ranges and not self.column_field_map:
-            self._assign_column_fields()
+        combined = self.combine_input_fields(input_vector)
         for c in self.columns:
             c.compute_overlap(combined)
         active_columns = self.inhibition(self.columns, inhibition_radius)
         print(f"Computed active columns. Total active columns: {len(active_columns)}")
         return active_columns
 
-    def _combine_input_fields(self, input_vector: InputComposite) -> np.ndarray:
-        """Internal helper: if input_vector is a list/tuple of fields, concatenate.
-        Also allows a dict of name -> field which records field ranges.
-        Ensures binary int np array output."""
-        # Dict branch (ordered in insertion order)
+    def combine_input_fields(self, input_vector: InputComposite) -> np.ndarray:
+        """Prepare / combine input fields into a single binary numpy array.
+
+        Responsibilities moved out of `compute_active_columns` so they can be used
+        independently by the new single-step `run` helper or external callers.
+
+        Accepted forms:
+          - 1D array-like of ints (already concatenated)
+          - list / tuple of field arrays ⇒ concatenated
+          - dict[str, field array] ⇒ concatenated (order preserved) and field
+            metadata (`field_ranges`, `field_order`, `column_field_map` reset)
+
+        Returns: np.ndarray (dtype=int) of length == `input_space_size`.
+        Raises: ValueError if combined length mismatches configured size.
+        """
+        # Dict branch (ordered by insertion order)
         if isinstance(input_vector, dict):
             start = 0
             arrays = []
-            # Reset metadata for this composition
             self.field_ranges = {}
             self.field_order = []
             for name, arr in input_vector.items():
@@ -247,13 +235,44 @@ class TemporalPooler:
                 arrays.append(a)
                 start = end
             combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
-            # Column-field map will be recomputed
+            # Invalidate previous mapping; will be recomputed lazily
             self.column_field_map = {}
-            return combined
-        if isinstance(input_vector, (list, tuple)):
+        elif isinstance(input_vector, (list, tuple)):
             arrays = [np.asarray(v, dtype=int) for v in input_vector]
-            return np.concatenate(arrays) if arrays else np.array([], dtype=int)
-        return np.asarray(input_vector, dtype=int)
+            combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
+        else:
+            combined = np.asarray(input_vector, dtype=int)
+
+        if combined.shape[0] != self.input_space_size:
+            raise ValueError(
+                f"Combined input length {combined.shape[0]} != configured input_space_size {self.input_space_size}."
+            )
+
+        # Defensive structure check for previously stored metadata
+        if self.field_ranges and any(len(rg) != 2 for rg in self.field_ranges.values()):
+            self.field_ranges = {}
+            self.field_order = []
+            self.column_field_map = {}
+
+        # Build mapping if new metadata present
+        if self.field_ranges and not self.column_field_map:
+            self._assign_column_fields()
+        return combined
+
+    # Backwards-compatible alias (private name used earlier in code/tests if any user code depended on it)
+    _combine_input_fields = combine_input_fields
+
+    def _columns_from_raw_input(self, combined: np.ndarray) -> List[Column]:
+        """Return columns that receive at least one active (1) bit via a connected synapse.
+        Used only in direct mode when an InputComposite is supplied and we want
+        a non-competitive feed-forward activation set."""
+        cols: List[Column] = []
+        active_indices = np.where(combined > 0)[0]
+        active_set = set(int(i) for i in active_indices)
+        for col in self.columns:
+            if any(s.source_input in active_set for s in col.connected_synapses):
+                cols.append(col)
+        return cols
 
     def _assign_column_fields(self) -> None:
         """Assign each column a dominant field based on connected synapse source indices.
@@ -379,6 +398,72 @@ class TemporalPooler:
         self.predictive_cells = {}
         self.learning_segments = {}
         self.negative_segments = {}
+
+    def run(
+        self,
+        input_data: InputComposite | Sequence[Column] | Column,
+        t: int,
+        mode: str = "spatial",
+        inhibition_radius: Optional[float] = None,
+    ) -> Dict[str, object]:
+        """Run exactly one temporal step.
+
+        spatial mode (default): standard spatial pooling (overlap + inhibition)
+          over InputComposite followed by temporal memory updates.
+        direct mode: bypass inhibition and boosting. Accepts either:
+          - Column / sequence[Column]
+          - sequence[int] (indices of columns)
+          - any InputComposite (array, list-of-arrays, dict-of-arrays). In this
+            case every column with at least one connected synapse on an active
+            input bit becomes active (simple feed-forward activation) and field
+            metadata is (re)computed if dict provided.
+
+        Returns dict with keys (state at time t): active_columns, active_cells,
+        predictive_cells, learning_segments.
+        """
+        if mode not in {"spatial", "direct"}:
+            raise ValueError("mode must be 'spatial' or 'direct'")
+
+        if mode == "spatial":
+            if inhibition_radius is None:
+                raise ValueError("inhibition_radius required for spatial mode")
+            active_columns = self.compute_active_columns(input_data, inhibition_radius)  # type: ignore[arg-type]
+        else:  # direct
+            if isinstance(input_data, Column):
+                active_columns = [input_data]
+            elif isinstance(input_data, dict) or isinstance(input_data, np.ndarray):
+                combined = self.combine_input_fields(input_data)
+                active_columns = self._columns_from_raw_input(combined)
+            elif isinstance(input_data, (list, tuple)):
+                seq = list(input_data)
+                if not seq:
+                    active_columns = []
+                else:
+                    first = seq[0]
+                    if isinstance(first, Column):
+                        active_columns = seq  # type: ignore[assignment]
+                    elif isinstance(first, (int, np.integer)):
+                        idx_list = [int(i) for i in seq if isinstance(i, (int, np.integer))]
+                        active_columns = [self.columns[i] for i in idx_list]
+                    else:  # treat as list/tuple of field arrays
+                        combined = self.combine_input_fields(seq)  # type: ignore[arg-type]
+                        active_columns = self._columns_from_raw_input(combined)
+            else:  # fallback attempt
+                combined = self.combine_input_fields(input_data)  # type: ignore[arg-type]
+                active_columns = self._columns_from_raw_input(combined)
+
+        # Defensive: ensure only Column objects
+        active_columns = [c for c in active_columns if isinstance(c, Column)]
+
+        self.compute_active_state(active_columns, t)
+        self.compute_predictive_state(t)
+        self.learn(t)
+        return {
+            "active_columns": active_columns,
+            "active_cells": self.active_cells.get(t, set()),
+            "predictive_cells": self.predictive_cells.get(t, set()),
+            "learning_segments": self.learning_segments.get(t, set()),
+        }
 
     def learn(self, t: int) -> None:
         """Apply learning updates after computing active and predictive states at time t.
