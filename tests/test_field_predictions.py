@@ -16,8 +16,9 @@ def test_dict_field_prediction_filtering():
 
     # Time 0
     active_cols = tp.compute_active_columns(fields, inhibition_radius=2)
-    tp.compute_active_state(active_cols, 0)
-    tp.compute_predictive_state(0)
+    tp.current_t = 0
+    tp.compute_active_state(active_cols)
+    tp.compute_predictive_state()
 
     # Basic retrieval default (latest)
     all_pred_cols = tp.get_predictive_columns()

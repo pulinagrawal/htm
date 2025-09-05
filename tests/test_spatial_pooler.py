@@ -68,14 +68,14 @@ def test_temporal_bursting_creates_new_segment_and_winner():
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
     active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
-    t = 0
-    tp.compute_active_state(active_cols, t)
+    tp.current_t = 0
+    tp.compute_active_state(active_cols)
     # All cells in col 0 become active (burst)
     col0 = tp.columns[0]
-    assert len(tp.active_cells[t].intersection(col0.cells)) == len(col0.cells)
+    assert len(tp.active_cells[tp.current_t].intersection(col0.cells)) == len(col0.cells)
     # One winner cell selected
-    assert len(tp.winner_cells[t].intersection(col0.cells)) == 1
-    winner = list(tp.winner_cells[t].intersection(col0.cells))[0]
+    assert len(tp.winner_cells[tp.current_t].intersection(col0.cells)) == 1
+    winner = list(tp.winner_cells[tp.current_t].intersection(col0.cells))[0]
     # A new segment should have been created on the winner
     assert len(winner.segments) == 1
 
@@ -87,18 +87,18 @@ def test_temporal_prediction_restricts_activation():
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
     active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
-    t = 0
-    tp.compute_active_state(active_cols, t)
-    tp.compute_predictive_state(t)
-    tp.learn(t)
+    tp.current_t = 0
+    tp.compute_active_state(active_cols)
+    tp.compute_predictive_state()
+    tp.learn()
     # Now craft prev active cells to enable prediction: use winner cell's segment synapses reinforced
     # Simulate next time step with same column active
     active_cols_1 = tp.compute_active_columns(input_vec, inhibition_radius=2)
-    t = 1
-    tp.compute_active_state(active_cols_1, t)
+    tp.current_t = 1
+    tp.compute_active_state(active_cols_1)
     # If prediction worked, fewer active cells than full burst
     col0 = tp.columns[0]
-    active_in_col = tp.active_cells[t].intersection(col0.cells)
+    active_in_col = tp.active_cells[tp.current_t].intersection(col0.cells)
     assert 1 <= len(active_in_col) <= len(col0.cells)
 
 
@@ -109,8 +109,9 @@ def test_segment_reinforcement_grows_new_synapses():
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
     active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
-    tp.compute_active_state(active_cols, 0)
-    tp.learn(0)
+    tp.current_t = 0
+    tp.compute_active_state(active_cols)
+    tp.learn()
     winner = list(tp.winner_cells[0].intersection(tp.columns[0].cells))[0]
     seg = winner.segments[0]
     before_count = len(seg.synapses)
@@ -119,12 +120,13 @@ def test_segment_reinforcement_grows_new_synapses():
     for syn in tp.columns[1].connected_synapses[:MIN_OVERLAP]:
         input_vec2[syn.source_input] = 1
     active_cols2 = tp.compute_active_columns(input_vec2, inhibition_radius=2)
-    tp.compute_active_state(active_cols2, 1)
-    tp.learn(1)  # reinforce any predictive segments (none yet) but negative segments punished
+    tp.current_t = 1
+    tp.compute_active_state(active_cols2)
+    tp.learn()  # reinforce any predictive segments (none yet) but negative segments punished
     # Mark previous active cells as predictive sources artificially by calling compute_predictive_state
-    tp.compute_predictive_state(1)
+    tp.compute_predictive_state()
     # Reinforce again after adding prev active context
-    tp.learn(1)
+    tp.learn()
     after_count = len(seg.synapses)
     assert after_count >= before_count  # new synapses may be added
 
@@ -136,8 +138,9 @@ def test_distal_synapse_permanence_changes_on_reinforce_and_punish():
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
     active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
-    tp.compute_active_state(active_cols, 0)
-    tp.learn(0)
+    tp.current_t = 0
+    tp.compute_active_state(active_cols)
+    tp.learn()
     winner = list(tp.winner_cells[0].intersection(tp.columns[0].cells))[0]
     seg = winner.segments[0]
     # Ensure synapses exist by reinforcing after crafting prev active cells
@@ -146,12 +149,15 @@ def test_distal_synapse_permanence_changes_on_reinforce_and_punish():
     for syn in tp.columns[1].connected_synapses[:MIN_OVERLAP]:
         input_vec2[syn.source_input] = 1
     active_cols2 = tp.compute_active_columns(input_vec2, inhibition_radius=2)
-    tp.compute_active_state(active_cols2, 1)
+    tp.current_t = 1
+    tp.compute_active_state(active_cols2)
     # Reinforce segment using prev active cells at t=1 (simulate prediction learning)
-    tp.reinforce_segment(seg, 1)
+    tp.current_t = 1
+    tp.reinforce_segment(seg)
     assert len(seg.synapses) > 0
     base_perms = [syn.permanence for syn in seg.synapses]
-    tp.punish_segment(seg, 2)
+    tp.current_t = 2
+    tp.punish_segment(seg)
     after_punish = [syn.permanence for syn in seg.synapses]
     # At least one permanence should have decreased
     assert any(a < b for a, b in zip(after_punish, base_perms))

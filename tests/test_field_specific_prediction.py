@@ -18,7 +18,8 @@ def test_field_specific_prediction_filtering():
     tp = TemporalPooler(input_space_size=total, column_count=64, cells_per_column=4, initial_synapses_per_column=12)
 
     # Run one spatial step with dict input to establish field metadata & mapping
-    tp.run({"f1": field1, "f2": field2}, t=0, mode="spatial", inhibition_radius=2)
+    tp.current_t = 0
+    tp.run({"f1": field1, "f2": field2}, mode="spatial", inhibition_radius=2)
 
     # Sanity: field metadata captured
     assert tp.field_ranges == {"f1": (0, 10), "f2": (10, 30)}

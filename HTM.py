@@ -164,6 +164,8 @@ class TemporalPooler:
         self.field_ranges = {}
         self.field_order = []
         self.column_field_map = {}
+        # Internal time counter (replaces external t parameter)
+        self.current_t = 0
 
     # Initializes the columns in the region
     def initialize_region(
@@ -297,10 +299,11 @@ class TemporalPooler:
                 self.column_field_map[col] = None
     
     # --------------------- Temporal Memory Core ---------------------
-    def compute_active_state(self, active_columns: Sequence[Column], t: int) -> None:
+    def compute_active_state(self, active_columns: Sequence[Column]) -> None:
         """Compute active & winner cells at time t using predictive cells from t-1.
         If a column was predicted (one or more predictive cells at t-1) only those predictive cells become active.
         Otherwise the column bursts (all cells active) and we pick a learning cell (winner cell)."""
+        t = self.current_t
         prev_predictive = self.predictive_cells.get(t-1, set())
         active_cells_t = set()
         winner_cells_t = set()
@@ -315,7 +318,7 @@ class TemporalPooler:
                     active_cells_t.add(cell)
                     winner_cells_t.add(cell)
                     # Mark segments that were active at t-1 for learning
-                    for seg in self.active_segments_of(cell, t-1):
+                    for seg in self._active_segments_of(cell, t-1):
                         learning_segments_t.add(seg)
             else:
                 # Bursting: all cells active
@@ -338,9 +341,10 @@ class TemporalPooler:
         self.learning_segments[t] = learning_segments_t
         print(f"Active state computed for time step {t}: {len(active_cells_t)} cells active.")
 
-    def compute_predictive_state(self, t: int) -> None:
+    def compute_predictive_state(self) -> None:
         """Compute predictive cells for next time based on segments active at time t.
         A segment is active if it has enough active connected synapses whose source cells are active at t."""
+        t = self.current_t
         active_cells_t = self.active_cells.get(t, set())
         predictive_cells_t = set()
         for column in self.columns:
@@ -402,33 +406,28 @@ class TemporalPooler:
     def run(
         self,
         input_data: InputComposite | Sequence[Column] | Column,
-        t: int,
         mode: str = "spatial",
         inhibition_radius: Optional[float] = None,
+        advance_time: bool = False,
     ) -> Dict[str, object]:
-        """Run exactly one temporal step.
+        """Execute one timestep of spatial + temporal processing.
 
-        spatial mode (default): standard spatial pooling (overlap + inhibition)
-          over InputComposite followed by temporal memory updates.
-        direct mode: bypass inhibition and boosting. Accepts either:
-          - Column / sequence[Column]
-          - sequence[int] (indices of columns)
-          - any InputComposite (array, list-of-arrays, dict-of-arrays). In this
-            case every column with at least one connected synapse on an active
-            input bit becomes active (simple feed-forward activation) and field
-            metadata is (re)computed if dict provided.
-
-        Returns dict with keys (state at time t): active_columns, active_cells,
-        predictive_cells, learning_segments.
+        Parameters:
+            input_data: Input composite or columns (mode dependent)
+            mode: 'spatial' (default) or 'direct'
+            inhibition_radius: required in spatial mode
+            advance_time: if True increments internal time counter after step
+        Returns:
+            Dict with active_columns, active_cells, predictive_cells, learning_segments for current timestep.
         """
+        t = self.current_t
         if mode not in {"spatial", "direct"}:
             raise ValueError("mode must be 'spatial' or 'direct'")
-
         if mode == "spatial":
             if inhibition_radius is None:
                 raise ValueError("inhibition_radius required for spatial mode")
             active_columns = self.compute_active_columns(input_data, inhibition_radius)  # type: ignore[arg-type]
-        else:  # direct
+        else:  # direct mode variants
             if isinstance(input_data, Column):
                 active_columns = [input_data]
             elif isinstance(input_data, dict) or isinstance(input_data, np.ndarray):
@@ -445,19 +444,19 @@ class TemporalPooler:
                     elif isinstance(first, (int, np.integer)):
                         idx_list = [int(i) for i in seq if isinstance(i, (int, np.integer))]
                         active_columns = [self.columns[i] for i in idx_list]
-                    else:  # treat as list/tuple of field arrays
+                    else:
                         combined = self.combine_input_fields(seq)  # type: ignore[arg-type]
                         active_columns = self._columns_from_raw_input(combined)
-            else:  # fallback attempt
+            else:
                 combined = self.combine_input_fields(input_data)  # type: ignore[arg-type]
                 active_columns = self._columns_from_raw_input(combined)
 
-        # Defensive: ensure only Column objects
         active_columns = [c for c in active_columns if isinstance(c, Column)]
-
-        self.compute_active_state(active_columns, t)
-        self.compute_predictive_state(t)
-        self.learn(t)
+        self.compute_active_state(active_columns)
+        self.compute_predictive_state()
+        self.learn()
+        if advance_time:
+            self.current_t += 1
         return {
             "active_columns": active_columns,
             "active_cells": self.active_cells.get(t, set()),
@@ -465,10 +464,11 @@ class TemporalPooler:
             "learning_segments": self.learning_segments.get(t, set()),
         }
 
-    def learn(self, t: int) -> None:
+    def learn(self) -> None:
         """Apply learning updates after computing active and predictive states at time t.
         - Reinforce learning segments for winner cells (positive).
         - Punish segments that predicted (at t-1) but whose columns did not become active (negative)."""
+        t = self.current_t  # internal time
         prev_predictive = self.predictive_cells.get(t-1, set())
         active_columns = {c for c in self.columns if any(cell in self.active_cells.get(t, set()) for cell in c.cells)}
         # Negative segments: segments that were active at t-1 (causing prediction) but column not active at t
@@ -477,16 +477,16 @@ class TemporalPooler:
             if column not in active_columns:
                 for cell in column.cells:
                     if cell in prev_predictive:
-                        for seg in self.active_segments_of(cell, t-1):
+                        for seg in self._active_segments_of(cell, t-1):
                             negative_segments.add(seg)
         self.negative_segments[t] = negative_segments
 
         # Positive reinforcement
         for seg in self.learning_segments.get(t, set()):
-            self.reinforce_segment(seg, t)
+            self.reinforce_segment(seg)
         # Negative reinforcement
         for seg in negative_segments:
-            self.punish_segment(seg, t)
+            self.punish_segment(seg)
         print(f"Learning applied at time {t}: +{len(self.learning_segments.get(t, set()))} / -{len(negative_segments)} segments.")
 
     # --------------------- Helper Methods (TM) ---------------------
@@ -511,15 +511,20 @@ class TemporalPooler:
                     best_segment = seg
         return best_cell, best_segment
 
-    def active_segments_of(self, cell: Cell, t: int) -> List[Segment]:
+    def _active_segments_of(self, cell: Cell, t: int) -> List[Segment]:
         prev_active_cells = self.active_cells.get(t, set())
         active_list = []
         for seg in cell.segments:
             if len(seg.active_synapses(prev_active_cells)) >= SEGMENT_ACTIVATION_THRESHOLD:
                 active_list.append(seg)
         return active_list
+    
+    def active_segments_of(self, cell: Cell) -> List[Segment]:
+        """Active segments for this cell at current timestep (uses self.current_t)."""
+        return self._active_segments_of(cell, self.current_t)
 
-    def reinforce_segment(self, segment: Segment, t: int) -> None:
+    def reinforce_segment(self, segment: Segment) -> None:
+        t = self.current_t  # internal time
         prev_active_cells = self.active_cells.get(t-1, set())
         # Strengthen existing active synapses
         for syn in segment.synapses:
@@ -535,7 +540,7 @@ class TemporalPooler:
             segment.synapses.append(DistalSynapse(cell_src, INITIAL_DISTAL_PERM))
         segment.sequence_segment = True
 
-    def punish_segment(self, segment: Segment, t: int) -> None:
+    def punish_segment(self, segment: Segment) -> None:
         for syn in segment.synapses:
             syn.permanence = max(0.0, syn.permanence - PERMANENCE_DEC)
 
@@ -611,11 +616,12 @@ if __name__ == "__main__":  # Optional manual smoke usage placeholder
     tp = TemporalPooler(input_space_size, column_count, cells_per_column, initial_synapses_per_column)
 
     for t in range(steps):
+        tp.current_t = t
         input_vector = np.random.randint(2, size=input_space_size)
         active_columns = tp.compute_active_columns(input_vector, inhibition_radius)
-        tp.compute_active_state(active_columns, t)
-        tp.compute_predictive_state(t)
-        tp.learn(t)
+        tp.compute_active_state(active_columns)
+        tp.compute_predictive_state()
+        tp.learn()
         if t == 0:
             # Spatial pooler learning only occasionally (for demo call once)
             tp.learning_phase(active_columns, input_vector)

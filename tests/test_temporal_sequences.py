@@ -49,10 +49,11 @@ def test_letter_sequence_prediction_accuracy():
 
     # Train
     for t, sym in enumerate(training_chain):
+        tp.current_t = t
         active_cols = list(letter_to_columns[sym])
-        tp.compute_active_state(active_cols, t)
-        tp.compute_predictive_state(t)
-        tp.learn(t)
+        tp.compute_active_state(active_cols)
+        tp.compute_predictive_state()
+        tp.learn()
 
     # # Boost distal synapse permanence so predictions can occur quickly
     # for col in tp.columns:
@@ -73,9 +74,10 @@ def test_letter_sequence_prediction_accuracy():
     correct = 0
     total = 0
     for t, sym in enumerate(test_chain):
+        tp.current_t = t
         active_cols = list(letter_to_columns[sym])
-        tp.compute_active_state(active_cols, t)
-        tp.compute_predictive_state(t)
+        tp.compute_active_state(active_cols)
+        tp.compute_predictive_state()
         if t < len(test_chain) - 1:
             next_sym = test_chain[t + 1]
             predicted_columns = tp.get_predictive_columns(t)
