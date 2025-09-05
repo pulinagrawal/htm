@@ -43,7 +43,7 @@ def test_run_produces_predictive_columns_accessible_via_api():
 
     tp.current_t = 0
     # Single spatial run (no time advance needed for this assertion)
-    result = tp.run(input_vec, mode="spatial", inhibition_radius=2, advance_time=False)
+    result = tp.run(input_vec, mode="spatial", inhibition_radius=2)
 
     # The predictive cell (target_cell) should be present in the run result
     predictive_cells = cast(Set, result["predictive_cells"])  # runtime value is a set

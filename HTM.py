@@ -408,7 +408,6 @@ class TemporalPooler:
         input_data: InputComposite | Sequence[Column] | Column,
         mode: str = "spatial",
         inhibition_radius: Optional[float] = None,
-        advance_time: bool = False,
     ) -> Dict[str, object]:
         """Execute one timestep of spatial + temporal processing.
 
@@ -416,7 +415,6 @@ class TemporalPooler:
             input_data: Input composite or columns (mode dependent)
             mode: 'spatial' (default) or 'direct'
             inhibition_radius: required in spatial mode
-            advance_time: if True increments internal time counter after step
         Returns:
             Dict with active_columns, active_cells, predictive_cells, learning_segments for current timestep.
         """
@@ -455,8 +453,7 @@ class TemporalPooler:
         self.compute_active_state(active_columns)
         self.compute_predictive_state()
         self.learn()
-        if advance_time:
-            self.current_t += 1
+        self.current_t += 1
         return {
             "active_columns": active_columns,
             "active_cells": self.active_cells.get(t, set()),

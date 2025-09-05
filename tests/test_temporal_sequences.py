@@ -91,3 +91,99 @@ def test_letter_sequence_prediction_accuracy():
     accuracy = correct / total
     print(f"Prediction accuracy: {accuracy:.2f}")
     assert accuracy >= 0.5, f"Prediction accuracy too low: {accuracy:.2f}"
+
+
+def test_two_field_letter_sequence_prediction_accuracy_with_run():
+    """Variant of single-field prediction test using two independent letter sequences.
+
+    Differences from `test_letter_sequence_prediction_accuracy`:
+      - Two separate training/test chains (field1, field2)
+      - At each timestep active columns are union of columns encoding both current letters
+      - Uses TemporalPooler.run(mode='direct') instead of manual state calls
+    Otherwise structure, thresholds and mapping approach remain intentionally similar.
+    """
+    random.seed(123)
+    np.random.default_rng(2)  # seed for reproducibility (not directly used after switch to random.sample)
+    letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    column_count = 128
+    tp = TemporalPooler(input_space_size=50, column_count=column_count, cells_per_column=6, initial_synapses_per_column=16)
+
+    # Partition columns into two disjoint pools representing two fields
+    pool1 = tp.columns[: column_count // 2]
+    pool2 = tp.columns[column_count // 2 :]
+    k = 5  # columns per letter per field
+    letter_to_columns_f1 = {L: random.sample(pool1, k) for L in letters}
+    letter_to_columns_f2 = {L: random.sample(pool2, k) for L in letters}
+
+    # Manually establish field metadata & column mapping (bypassing spatial dict input)
+    tp.field_ranges = {"f1": (0, 25), "f2": (25, 50)}
+    tp.field_order = ["f1", "f2"]
+    tp.column_field_map = {c: "f1" for c in pool1}
+    tp.column_field_map.update({c: "f2" for c in pool2})
+
+    # Training sequences (reuse list pattern from single-field test)
+    sequences = [list("ABCDX"), list("EFGHY"), list("JKLMN")]
+    training_chain_field1 = []
+    training_chain_field2 = []
+    for _ in range(100):
+        seq1 = random.choice(sequences)
+        seq2 = random.choice(sequences)
+        training_chain_field1.extend(seq1)
+        training_chain_field2.extend(seq2)
+
+    # Make chains same length
+    length = min(len(training_chain_field1), len(training_chain_field2))
+    training_chain_field1 = training_chain_field1[:length]
+    training_chain_field2 = training_chain_field2[:length]
+
+    # Train using run() in direct mode (supply union of columns active for both fields)
+    tp.current_t = 0
+    for t in range(length):
+        sym1 = training_chain_field1[t]
+        sym2 = training_chain_field2[t]
+        active_cols = list({*letter_to_columns_f1[sym1], *letter_to_columns_f2[sym2]})
+        tp.run(active_cols, mode="direct")
+
+    # Build test chains similarly
+    test_chain_field1 = []
+    test_chain_field2 = []
+    for _ in range(100):
+        seq1 = random.choice(sequences)
+        seq2 = random.choice(sequences)
+        test_chain_field1.extend(seq1)
+        test_chain_field2.extend(seq2)
+    length_test = min(len(test_chain_field1), len(test_chain_field2))
+    test_chain_field1 = test_chain_field1[:length_test]
+    test_chain_field2 = test_chain_field2[:length_test]
+
+    tp.reset_state()
+    tp.current_t = 0
+    correct_f1 = 0
+    correct_f2 = 0
+    total_f1 = 0
+    total_f2 = 0
+    for t in range(length_test):
+        sym1 = test_chain_field1[t]
+        sym2 = test_chain_field2[t]
+        active_cols = list({*letter_to_columns_f1[sym1], *letter_to_columns_f2[sym2]})
+        tp.run(active_cols, mode="direct")
+        if t < length_test - 1:
+            next1 = test_chain_field1[t + 1]
+            next2 = test_chain_field2[t + 1]
+            # Field-specific predicted columns
+            pred_cols_f1 = tp.get_predictive_columns(t, field_name="f1")
+            pred_cols_f2 = tp.get_predictive_columns(t, field_name="f2")
+            if set(letter_to_columns_f1[next1]) & pred_cols_f1:
+                correct_f1 += 1
+            if set(letter_to_columns_f2[next2]) & pred_cols_f2:
+                correct_f2 += 1
+            total_f1 += 1
+            total_f2 += 1
+
+    assert total_f1 > 0 and total_f2 > 0
+    acc_f1 = correct_f1 / total_f1
+    acc_f2 = correct_f2 / total_f2
+    combined_accuracy = (correct_f1 + correct_f2) / (total_f1 + total_f2)
+    print(f"Field1 accuracy: {acc_f1:.2f} Field2 accuracy: {acc_f2:.2f} Combined: {combined_accuracy:.2f}")
+    assert acc_f1 >= 0.5, f"Field1 prediction accuracy too low: {acc_f1:.2f}"
+    assert acc_f2 >= 0.5, f"Field2 prediction accuracy too low: {acc_f2:.2f}"
