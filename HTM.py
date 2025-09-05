@@ -143,10 +143,10 @@ class TemporalPooler:
 
     def __init__(
         self,
-        input_space_size: int,
         column_count: int,
         cells_per_column: int,
         initial_synapses_per_column: int,
+        input_space_size: int=None,
     ) -> None:
         self.input_space_size = input_space_size
         self.columns = self.initialize_region(input_space_size, column_count, initial_synapses_per_column)
