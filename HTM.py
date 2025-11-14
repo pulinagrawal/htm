@@ -143,12 +143,13 @@ class TemporalPooler:
 
     def __init__(
         self,
-        column_count: int,
-        cells_per_column: int,
-        initial_synapses_per_column: int,
-        input_space_size: int=None,
+    input_space_size: int,
+    column_count: int,
+    cells_per_column: int,
+    initial_synapses_per_column: int,
     ) -> None:
-        self.input_space_size = input_space_size
+        # Explicitly store configured input size (must be provided)
+        self.input_space_size = int(input_space_size)
         self.columns = self.initialize_region(input_space_size, column_count, initial_synapses_per_column)
         self.cells_per_column = cells_per_column
         for c in self.columns:
@@ -190,23 +191,31 @@ class TemporalPooler:
         
 
     # Computes the active columns after applying inhibition
-    def compute_active_columns(
+    def _compute_active_columns_list(
         self,
         input_vector: InputComposite,
         inhibition_radius: float,
     ) -> List[Column]:
-        """Compute active columns from an input (single or multi-field).
-
-        This method now delegates input preparation (concatenation & field metadata
-        handling) to `combine_input_fields` so that callers (or the new `run` helper)
-        can reuse that logic independently of spatial processing.
-        """
+        """Internal: return list of active Column objects (legacy behavior)."""
         combined = self.combine_input_fields(input_vector)
         for c in self.columns:
             c.compute_overlap(combined)
-        active_columns = self.inhibition(self.columns, inhibition_radius)
-        print(f"Computed active columns. Total active columns: {len(active_columns)}")
-        return active_columns
+        return self.inhibition(self.columns, inhibition_radius)
+
+    def compute_active_columns(
+        self,
+        input_vector: InputComposite,
+        inhibition_radius: float,
+    ) -> np.ndarray:
+        """Public interface: return binary vector (length = number of columns) indicating active columns.
+
+        Internally we still compute the list of Column objects for algorithmic use.
+        A 1 in position i means `self.columns[i]` is active this timestep.
+        """
+        active_list = self._compute_active_columns_list(input_vector, inhibition_radius)
+        mask = self.columns_to_binary(active_list)
+        print(f"Computed active columns. Total active columns: {int(mask.sum())}")
+        return mask
 
     def combine_input_fields(self, input_vector: InputComposite) -> np.ndarray:
         """Prepare / combine input fields into a single binary numpy array.
@@ -297,6 +306,31 @@ class TemporalPooler:
                 self.column_field_map[col] = best
             else:
                 self.column_field_map[col] = None
+
+    # --------------------- Binary Conversion Utilities ---------------------
+    def columns_to_binary(self, columns: Sequence[Column]) -> np.ndarray:
+        """Return binary vector (len = number of columns) with 1 for each column in provided sequence/set."""
+        mask = np.zeros(len(self.columns), dtype=int)
+        col_index = {c: i for i, c in enumerate(self.columns)}
+        for c in columns:
+            idx = col_index.get(c)
+            if idx is not None:
+                mask[idx] = 1
+        return mask
+
+    def cells_to_binary(self, cells: Set[Cell]) -> np.ndarray:
+        """Return binary vector over all cells (flattened columns) representing active/predictive/etc cells.
+
+        Ordering = for col index i, its cells occupy slice [i*cells_per_column : (i+1)*cells_per_column)."""
+        total_cells = len(self.columns) * self.cells_per_column
+        vec = np.zeros(total_cells, dtype=int)
+        # Build mapping once (could cache if performance concern)
+        for col_idx, col in enumerate(self.columns):
+            base = col_idx * self.cells_per_column
+            for local_idx, cell in enumerate(col.cells):
+                if cell in cells:
+                    vec[base + local_idx] = 1
+        return vec
     
     # --------------------- Temporal Memory Core ---------------------
     def compute_active_state(self, active_columns: Sequence[Column]) -> None:
@@ -360,22 +394,15 @@ class TemporalPooler:
         self,
         t: Optional[int] = None,
         field_name: Optional[str] = None,
-    ) -> Set[Column]:
-        """Return predicted columns.
+    ) -> np.ndarray:
+        """Return binary vector of predictive columns (length = number of columns).
 
-        Parameters:
-          t: int or None
-             - None (default): use latest computed predictive time step.
-             - -1: previous step relative to latest.
-             - any other int: use that exact time index.
-          field_name: optional string. If provided and dictionary-based input was
-             previously used (field_ranges set), only columns whose dominant field
-             matches are returned. If field metadata absent, raises ValueError.
-
-        Returns: set of Column objects.
+        Previous interface returned a set[Column]; now a numpy int array with 1s for
+        predictive columns. Field filtering (if `field_name` supplied) is applied
+        before vectorisation.
         """
         if not self.predictive_cells:
-            return set()
+            return np.zeros(len(self.columns), dtype=int)
         max_t = max(self.predictive_cells.keys())
         if t is None:
             query_t = max_t
@@ -384,16 +411,21 @@ class TemporalPooler:
         else:
             query_t = t
         if query_t < 0:
-            return set()
+            return np.zeros(len(self.columns), dtype=int)
         pred_cells = self.predictive_cells.get(query_t, set())
         cols = {col for col in self.columns if any(cell in pred_cells for cell in col.cells)}
         if field_name is not None:
-            if not self.field_ranges:
-                raise ValueError("Field-specific prediction requested but no field metadata available (no dict input used).")
-            if not self.column_field_map:
+            # Allow either classic field_ranges-based metadata OR explicit column_field_map assignment
+            if not (self.field_ranges or self.column_field_map):
+                raise ValueError(
+                    "Field-specific prediction requested but no field metadata available. "
+                    "Use dict input of arrays (spatial) or dict of columns (direct) at least once before querying."
+                )
+            if self.field_ranges and not self.column_field_map:
+                # Lazily derive mapping from proximal synapses if only field_ranges known
                 self._assign_column_fields()
             cols = {c for c in cols if self.column_field_map.get(c) == field_name}
-        return cols
+        return self.columns_to_binary(sorted(cols, key=lambda c: self.columns.index(c)))
 
     def reset_state(self) -> None:
         """Reset transient temporal memory state (cells' learned segments remain)."""
@@ -405,7 +437,7 @@ class TemporalPooler:
 
     def run(
         self,
-        input_data: InputComposite | Sequence[Column] | Column,
+    input_data: InputComposite | Sequence[Column] | Column | Dict[str, Union[Column, Sequence[Column]]],
         mode: str = "spatial",
         inhibition_radius: Optional[float] = None,
     ) -> Dict[str, object]:
@@ -424,42 +456,81 @@ class TemporalPooler:
         if mode == "spatial":
             if inhibition_radius is None:
                 raise ValueError("inhibition_radius required for spatial mode")
-            active_columns = self.compute_active_columns(input_data, inhibition_radius)  # type: ignore[arg-type]
-        else:  # direct mode variants
-            if isinstance(input_data, Column):
-                active_columns = [input_data]
-            elif isinstance(input_data, dict) or isinstance(input_data, np.ndarray):
-                combined = self.combine_input_fields(input_data)
-                active_columns = self._columns_from_raw_input(combined)
-            elif isinstance(input_data, (list, tuple)):
-                seq = list(input_data)
-                if not seq:
-                    active_columns = []
-                else:
-                    first = seq[0]
-                    if isinstance(first, Column):
-                        active_columns = seq  # type: ignore[assignment]
-                    elif isinstance(first, (int, np.integer)):
-                        idx_list = [int(i) for i in seq if isinstance(i, (int, np.integer))]
-                        active_columns = [self.columns[i] for i in idx_list]
-                    else:
-                        combined = self.combine_input_fields(seq)  # type: ignore[arg-type]
-                        active_columns = self._columns_from_raw_input(combined)
-            else:
-                combined = self.combine_input_fields(input_data)  # type: ignore[arg-type]
-                active_columns = self._columns_from_raw_input(combined)
+            active_mask = self.compute_active_columns(input_data, inhibition_radius)  # type: ignore[arg-type]
+            active_columns = [self.columns[i] for i, v in enumerate(active_mask) if v]
+        else:
+            active_columns = self._direct_mode_active_columns(input_data)
+            active_mask = self.columns_to_binary(active_columns)
 
         active_columns = [c for c in active_columns if isinstance(c, Column)]
         self.compute_active_state(active_columns)
         self.compute_predictive_state()
         self.learn()
         self.current_t += 1
+        # Vectorised cell-related outputs
+        active_cells_vec = self.cells_to_binary(self.active_cells.get(t, set()))
+        predictive_cells_vec = self.cells_to_binary(self.predictive_cells.get(t, set()))
+        # Learning segments -> mark owning cells (winner cells) as learning
+        learning_cells_vec = self.cells_to_binary(self.winner_cells.get(t, set()))
         return {
-            "active_columns": active_columns,
-            "active_cells": self.active_cells.get(t, set()),
-            "predictive_cells": self.predictive_cells.get(t, set()),
-            "learning_segments": self.learning_segments.get(t, set()),
+            "active_columns": active_mask,
+            "active_cells": active_cells_vec,
+            "predictive_cells": predictive_cells_vec,
+            "learning_cells": learning_cells_vec,
         }
+
+    def _direct_mode_active_columns(
+        self,
+        input_data: InputComposite | Sequence[Column] | Column | Dict[str, Union[Column, Sequence[Column]]],
+    ) -> List[Column]:
+        """Resolve active columns for 'direct' mode without spatial competition (duplicate of htm.py)."""
+        if isinstance(input_data, Column):
+            return [input_data]
+        if isinstance(input_data, dict):
+            values = list(input_data.values())
+            is_grouping = bool(values) and all(isinstance(v, (Column, list, tuple)) for v in values)
+            if is_grouping:
+                active: List[Column] = []
+                self.field_order = list(input_data.keys())
+                self.field_ranges = {}
+                for fname, spec in input_data.items():
+                    if isinstance(spec, Column):
+                        iter_items = [spec]
+                    else:
+                        iter_items = list(spec)  # type: ignore[arg-type]
+                    for item in iter_items:
+                        if isinstance(item, int):
+                            col_obj = self.columns[item]
+                        else:
+                            col_obj = item  # type: ignore[assignment]
+                        if isinstance(col_obj, Column):
+                            active.append(col_obj)
+                            self.column_field_map[col_obj] = fname
+                seen: Set[Column] = set()
+                deduped: List[Column] = []
+                for c in active:
+                    if c not in seen:
+                        deduped.append(c)
+                        seen.add(c)
+                return deduped
+            combined = self.combine_input_fields(input_data)  # type: ignore[arg-type]
+            return self._columns_from_raw_input(combined)
+        if isinstance(input_data, np.ndarray):
+            combined = self.combine_input_fields(input_data)
+            return self._columns_from_raw_input(combined)
+        if isinstance(input_data, (list, tuple)):
+            seq = list(input_data)
+            if not seq:
+                return []
+            first = seq[0]
+            if isinstance(first, Column):
+                return seq  # type: ignore[return-value]
+            if isinstance(first, (int, np.integer)):
+                return [self.columns[int(i)] for i in seq if isinstance(i, (int, np.integer))]
+            combined = self.combine_input_fields(seq)  # type: ignore[arg-type]
+            return self._columns_from_raw_input(combined)
+        combined = self.combine_input_fields(input_data)  # type: ignore[arg-type]
+        return self._columns_from_raw_input(combined)
 
     def learn(self) -> None:
         """Apply learning updates after computing active and predictive states at time t.
@@ -615,11 +686,26 @@ if __name__ == "__main__":  # Optional manual smoke usage placeholder
     for t in range(steps):
         tp.current_t = t
         input_vector = np.random.randint(2, size=input_space_size)
-        active_columns = tp.compute_active_columns(input_vector, inhibition_radius)
-        tp.compute_active_state(active_columns)
+        active_mask = tp.compute_active_columns(input_vector, inhibition_radius)
+        active_list = [tp.columns[i] for i, v in enumerate(active_mask) if v]
+        tp.compute_active_state(active_list)
         tp.compute_predictive_state()
         tp.learn()
         if t == 0:
             # Spatial pooler learning only occasionally (for demo call once)
-            tp.learning_phase(active_columns, input_vector)
+            tp.learning_phase(active_list, input_vector)
+    print("Temporal Memory demo completed.")
+    tp = TemporalPooler(input_space_size, column_count, cells_per_column, initial_synapses_per_column)
+
+    for t in range(steps):
+        tp.current_t = t
+        input_vector = np.random.randint(2, size=input_space_size)
+        active_mask = tp.compute_active_columns(input_vector, inhibition_radius)
+        active_list = [tp.columns[i] for i, v in enumerate(active_mask) if v]
+        tp.compute_active_state(active_list)
+        tp.compute_predictive_state()
+        tp.learn()
+        if t == 0:
+            # Spatial pooler learning only occasionally (for demo call once)
+            tp.learning_phase(active_list, input_vector)
     print("Temporal Memory demo completed.")
