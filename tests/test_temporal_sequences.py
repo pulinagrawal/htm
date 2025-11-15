@@ -15,12 +15,12 @@ def test_multi_field_input_equivalence():
     concat = np.concatenate([field1, field2])
 
     # First call: concatenated explicit array
-    active_cols_concat = tp.compute_active_columns(concat, inhibition_radius=2)
-    positions_concat = {c.position for c in active_cols_concat}
+    active_mask_concat = tp.compute_active_columns(concat, inhibition_radius=2)
+    positions_concat = {tp.columns[i].position for i, v in enumerate(active_mask_concat) if v}
 
     # Second call: list of fields (should be identical after internal combine)
-    active_cols_multi = tp.compute_active_columns([field1, field2], inhibition_radius=2)
-    positions_multi = {c.position for c in active_cols_multi}
+    active_mask_multi = tp.compute_active_columns([field1, field2], inhibition_radius=2)
+    positions_multi = {tp.columns[i].position for i, v in enumerate(active_mask_multi) if v}
 
     assert positions_concat == positions_multi, "Multi-field input should match pre-concatenated input results"
 
@@ -36,7 +36,9 @@ def test_letter_sequence_prediction_accuracy():
     k = 5  # columns per letter
     letter_to_columns = {}
     for L in letters:
-        letter_to_columns[L] = rng.choice(tp.columns, size=k, replace=False)
+        # Sample k distinct indices then map to columns (avoids np.random typing complaints with objects)
+        idxs = rng.choice(len(tp.columns), size=k, replace=False)
+        letter_to_columns[L] = [tp.columns[int(i)] for i in idxs]
 
     # Training sequences
     sequences = [list("ABCD"), list("CBDE"), list("AXYZXC"), *[[chr(65+letter)] for letter in range(26)]]  # Provided examples
@@ -80,9 +82,10 @@ def test_letter_sequence_prediction_accuracy():
         tp.compute_predictive_state()
         if t < len(test_chain) - 1:
             next_sym = test_chain[t + 1]
-            predicted_columns = tp.get_predictive_columns(t)
+            predicted_mask = tp.get_predictive_columns(t)
+            predicted_set = {tp.columns[i] for i, v in enumerate(predicted_mask) if v}
             actual_next_cols = set(letter_to_columns[next_sym])
-            if actual_next_cols & predicted_columns:
+            if actual_next_cols & predicted_set:
                 correct += 1
             total += 1
 
@@ -115,12 +118,6 @@ def test_two_field_letter_sequence_prediction_accuracy_with_run():
     letter_to_columns_f1 = {L: random.sample(pool1, k) for L in letters}
     letter_to_columns_f2 = {L: random.sample(pool2, k) for L in letters}
 
-    # Manually establish field metadata & column mapping (bypassing spatial dict input)
-    tp.field_ranges = {"f1": (0, 25), "f2": (25, 50)}
-    tp.field_order = ["f1", "f2"]
-    tp.column_field_map = {c: "f1" for c in pool1}
-    tp.column_field_map.update({c: "f2" for c in pool2})
-
     # Training sequences (reuse list pattern from single-field test)
     sequences = [list("ABCDX"), list("EFGHY"), list("JKLMN")]
     training_chain_field1 = []
@@ -141,8 +138,7 @@ def test_two_field_letter_sequence_prediction_accuracy_with_run():
     for t in range(length):
         sym1 = training_chain_field1[t]
         sym2 = training_chain_field2[t]
-        active_cols = list({*letter_to_columns_f1[sym1], *letter_to_columns_f2[sym2]})
-        tp.run(active_cols, mode="direct")
+        tp.run({"f1": letter_to_columns_f1[sym1], "f2": letter_to_columns_f2[sym2]}, mode="direct")
 
     # Build test chains similarly
     test_chain_field1 = []
@@ -165,14 +161,15 @@ def test_two_field_letter_sequence_prediction_accuracy_with_run():
     for t in range(length_test):
         sym1 = test_chain_field1[t]
         sym2 = test_chain_field2[t]
-        active_cols = list({*letter_to_columns_f1[sym1], *letter_to_columns_f2[sym2]})
-        tp.run(active_cols, mode="direct")
+        tp.run({"f1": letter_to_columns_f1[sym1], "f2": letter_to_columns_f2[sym2]}, mode="direct")
         if t < length_test - 1:
             next1 = test_chain_field1[t + 1]
             next2 = test_chain_field2[t + 1]
             # Field-specific predicted columns
-            pred_cols_f1 = tp.get_predictive_columns(t, field_name="f1")
-            pred_cols_f2 = tp.get_predictive_columns(t, field_name="f2")
+            pred_mask_f1 = tp.get_predictive_columns(t, field_name="f1")
+            pred_mask_f2 = tp.get_predictive_columns(t, field_name="f2")
+            pred_cols_f1 = {tp.columns[i] for i, v in enumerate(pred_mask_f1) if v}
+            pred_cols_f2 = {tp.columns[i] for i, v in enumerate(pred_mask_f2) if v}
             if set(letter_to_columns_f1[next1]) & pred_cols_f1:
                 correct_f1 += 1
             if set(letter_to_columns_f2[next2]) & pred_cols_f2:

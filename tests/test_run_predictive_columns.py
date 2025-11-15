@@ -1,7 +1,7 @@
 import sys
 import pathlib
 import numpy as np
-from typing import cast, Set
+from typing import Set
 
 # Ensure module import path
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -44,17 +44,27 @@ def test_run_produces_predictive_columns_accessible_via_api():
     tp.current_t = 0
     # Single spatial run (no time advance needed for this assertion)
     result = tp.run(input_vec, mode="spatial", inhibition_radius=2)
-
-    # The predictive cell (target_cell) should be present in the run result
-    predictive_cells = cast(Set, result["predictive_cells"])  # runtime value is a set
-    assert target_cell in predictive_cells, "Expected manually primed cell to be predictive"
+    predictive_cells_vec = result["predictive_cells"]  # numpy array
+    # Convert vector back to set of cells for assertion convenience
+    pred_cells: Set = set()
+    for col_idx, col in enumerate(tp.columns):
+        base = col_idx * tp.cells_per_column
+        for local_idx, cell in enumerate(col.cells):
+            if predictive_cells_vec[base + local_idx]:
+                pred_cells.add(cell)
+    assert target_cell in pred_cells, "Expected manually primed cell to be predictive"
 
     # API: get predictive columns (explicit t and default) should both include col0
     pred_cols_explicit = tp.get_predictive_columns(t=0)
     pred_cols_default = tp.get_predictive_columns()
-    assert col0 in pred_cols_explicit, "Column owning predictive cell should be returned by get_predictive_columns(t=0)"
-    assert pred_cols_explicit == pred_cols_default, "Default predictive column retrieval should target latest timestep"
+    # Convert binary vectors to sets of column indices
+    explicit_idxs = {i for i, v in enumerate(pred_cols_explicit) if v}
+    default_idxs = {i for i, v in enumerate(pred_cols_default) if v}
+    assert 0 in explicit_idxs, "Column owning predictive cell should be returned by get_predictive_columns(t=0)"
+    assert explicit_idxs == default_idxs, "Default predictive column retrieval should target latest timestep"
 
     # Sanity: each predictive column must contain at least one predictive cell
-    for c in pred_cols_default:
-        assert any(cell in predictive_cells for cell in c.cells), "Predictive column lacks corresponding predictive cell"
+    for i, v in enumerate(pred_cols_default):
+        if v:
+            col = tp.columns[i]
+            assert any(cell in pred_cells for cell in col.cells), "Predictive column lacks corresponding predictive cell"

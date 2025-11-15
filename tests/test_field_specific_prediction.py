@@ -35,8 +35,10 @@ def test_field_specific_prediction_filtering():
     tp.predictive_cells[0] = predictive_cells
 
     # Filter predictions by field
-    predicted_f1 = tp.get_predictive_columns(t=0, field_name="f1")
-    predicted_f2 = tp.get_predictive_columns(t=0, field_name="f2")
-
-    assert predicted_f1 == set(chosen_cols), "Filtered predictive columns for field f1 should match manually set columns"
-    assert not predicted_f2, "No predictive columns should be returned for field f2 when only f1 cells were marked predictive"
+    predicted_f1_mask = tp.get_predictive_columns(t=0, field_name="f1")
+    predicted_f2_mask = tp.get_predictive_columns(t=0, field_name="f2")
+    f1_idx_set = {i for i, v in enumerate(predicted_f1_mask) if v}
+    f2_idx_set = {i for i, v in enumerate(predicted_f2_mask) if v}
+    chosen_idx_set = {tp.columns.index(c) for c in chosen_cols}
+    assert f1_idx_set == chosen_idx_set, "Filtered predictive columns for field f1 should match manually set columns"
+    assert not f2_idx_set, "No predictive columns should be returned for field f2 when only f1 cells were marked predictive"

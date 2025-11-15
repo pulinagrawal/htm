@@ -33,8 +33,8 @@ def test_compute_overlap_and_inhibition_min_overlap_filtering():
             count += 1
             if count >= MIN_OVERLAP:
                 break
-    active_cols = tp.compute_active_columns(input_vec, inhibition_radius=1.5)
-    # Both first two columns should survive local inhibition if their overlap identical
+    active_mask = tp.compute_active_columns(input_vec, inhibition_radius=1.5)
+    active_cols = [tp.columns[i] for i, v in enumerate(active_mask) if v]
     positions = [c.position for c in active_cols]
     assert tp.columns[0].position in positions
     assert tp.columns[1].position in positions
@@ -67,7 +67,8 @@ def test_temporal_bursting_creates_new_segment_and_winner():
     # Activate first column only
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
-    active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_mask = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_cols = [tp.columns[i] for i, v in enumerate(active_mask) if v]
     tp.current_t = 0
     tp.compute_active_state(active_cols)
     # All cells in col 0 become active (burst)
@@ -86,14 +87,16 @@ def test_temporal_prediction_restricts_activation():
     input_vec = np.zeros(32, dtype=int)
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
-    active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_mask = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_cols = [tp.columns[i] for i, v in enumerate(active_mask) if v]
     tp.current_t = 0
     tp.compute_active_state(active_cols)
     tp.compute_predictive_state()
     tp.learn()
     # Now craft prev active cells to enable prediction: use winner cell's segment synapses reinforced
     # Simulate next time step with same column active
-    active_cols_1 = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_mask_1 = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_cols_1 = [tp.columns[i] for i, v in enumerate(active_mask_1) if v]
     tp.current_t = 1
     tp.compute_active_state(active_cols_1)
     # If prediction worked, fewer active cells than full burst
@@ -108,7 +111,8 @@ def test_segment_reinforcement_grows_new_synapses():
     input_vec = np.zeros(32, dtype=int)
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
-    active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_mask = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_cols = [tp.columns[i] for i, v in enumerate(active_mask) if v]
     tp.current_t = 0
     tp.compute_active_state(active_cols)
     tp.learn()
@@ -119,7 +123,8 @@ def test_segment_reinforcement_grows_new_synapses():
     input_vec2 = np.zeros(32, dtype=int)
     for syn in tp.columns[1].connected_synapses[:MIN_OVERLAP]:
         input_vec2[syn.source_input] = 1
-    active_cols2 = tp.compute_active_columns(input_vec2, inhibition_radius=2)
+    active_mask2 = tp.compute_active_columns(input_vec2, inhibition_radius=2)
+    active_cols2 = [tp.columns[i] for i, v in enumerate(active_mask2) if v]
     tp.current_t = 1
     tp.compute_active_state(active_cols2)
     tp.learn()  # reinforce any predictive segments (none yet) but negative segments punished
@@ -137,7 +142,8 @@ def test_distal_synapse_permanence_changes_on_reinforce_and_punish():
     input_vec = np.zeros(32, dtype=int)
     for syn in tp.columns[0].connected_synapses[:MIN_OVERLAP]:
         input_vec[syn.source_input] = 1
-    active_cols = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_mask = tp.compute_active_columns(input_vec, inhibition_radius=2)
+    active_cols = [tp.columns[i] for i, v in enumerate(active_mask) if v]
     tp.current_t = 0
     tp.compute_active_state(active_cols)
     tp.learn()
@@ -148,7 +154,8 @@ def test_distal_synapse_permanence_changes_on_reinforce_and_punish():
     input_vec2 = np.zeros(32, dtype=int)
     for syn in tp.columns[1].connected_synapses[:MIN_OVERLAP]:
         input_vec2[syn.source_input] = 1
-    active_cols2 = tp.compute_active_columns(input_vec2, inhibition_radius=2)
+    active_mask2 = tp.compute_active_columns(input_vec2, inhibition_radius=2)
+    active_cols2 = [tp.columns[i] for i, v in enumerate(active_mask2) if v]
     tp.current_t = 1
     tp.compute_active_state(active_cols2)
     # Reinforce segment using prev active cells at t=1 (simulate prediction learning)
