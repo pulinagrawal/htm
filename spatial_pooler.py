@@ -1,5 +1,3 @@
-from sre_constants import IN
-from turtle import pos
 import numpy as np
 
 from typing import (
@@ -21,7 +19,53 @@ def euclidean_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
     """Calculate the Euclidean distance between two points."""
     return float(np.linalg.norm(np.array(pos1) - np.array(pos2)))
 
+# Cell class represents a single cell in a column
+class Cell:
+    """Single cell within a column.
+
+    Holds a (possibly empty) list of distal segments used for Temporal Memory.
+    """
+
+    segments: List['Segment']  # forward reference
+    active:bool
+
+    def __init__(self) -> None:
+        self.segments = []
+        self.active = False
+
+    def __repr__(self) -> str:
+        return f"Cell(id={id(self)})"
+
+
+class DistalSynapse:
+    """Distal synapse referencing a source cell (Temporal Memory)."""
+
+    source_cell: Cell
+    permanence: float
+
+    def __init__(self, source_cell: Cell, permanence: float) -> None:
+        self.source_cell = source_cell
+        self.permanence = permanence
+
 # Synapse class represents a synapse which connects a segment to a source input
+class Segment:
+    """Distal segment composed of synapses to previously active cells."""
+
+    synapses: List[DistalSynapse]
+    sequence_segment: bool
+
+    def __init__(self, synapses: Optional[List[DistalSynapse]] = None) -> None:
+        self.synapses = synapses if synapses is not None else []
+        self.sequence_segment = False  # True if learned in a predictive context
+
+    def active_synapses(self, active_cells: Set[Cell]) -> List[DistalSynapse]:
+        """Return connected synapses whose source cell is active."""
+        return [syn for syn in self.synapses if syn.source_cell in active_cells and syn.permanence > CONNECTED_PERM]
+
+    def matching_synapses(self, prev_active_cells: Set[Cell]) -> List[DistalSynapse]:
+        """Return synapses whose source cell was previously active (ignores permanence threshold)."""
+        return [syn for syn in self.synapses if syn.source_cell in prev_active_cells]
+
 class ProximalSynapse:
     """Proximal synapse (input space) used by Spatial Pooler only."""
 
@@ -249,3 +293,26 @@ class SpatialPooler:
               self.column_field_map[col] = best
           else:
               self.column_field_map[col] = None
+
+class AffectedLayer:
+    cells: List['Cell']
+
+    CellField = Union[np.ndarray,
+                        Sequence[Column], 
+                        Sequence[int]]
+    def __init__(self, layer_size: int) -> None:
+        self.cells = [Cell() for _ in range(layer_size)]
+    
+    def set_active_state(self, cell_state: CellField) -> None:
+        """Compute and return the list of active columns for the given input vector."""
+        if (isinstance(cell_state, (list, tuple)) and all(isinstance(c, int) for c in cell_state)) \
+            or isinstance(cell_state, np.ndarray):
+            # This is a list/array of column indices
+            if len(cell_state) != len(self.cells):
+                raise ValueError("Length of column_state does not match number of columns.")
+
+            for cell, state in zip(self.cells, cell_state):
+                cell.active = bool(state)
+        elif isinstance(cell_state, (list, tuple)) and all(isinstance(c, Column) for c in cell_state):
+            raise NotImplementedError("Setting active columns from Column objects is not implemented.")
+    
