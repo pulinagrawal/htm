@@ -1106,6 +1106,10 @@ class TestTemporalPrediction(unittest.TestCase):
                 tm.set_active_columns(active_cols)
                 tm.compute(learn=True)
             
+            # Reset between sequence repetitions
+            if epoch < 14:
+                tm.reset()
+            
             # Every 3 epochs, test prediction
             if epoch % 3 == 2:
                 # Count predictions in the sequence
