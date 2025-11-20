@@ -816,6 +816,7 @@ class TestVaryingModelSizes(unittest.TestCase):
             for active_cols in sequence:
                 tm.set_active_columns(active_cols)
                 tm.compute(learn=True)
+            tm.reset()
         
         # Should create segments
         total_segments = sum(len(cell.segments) for cell in tm.get_cells())
