@@ -757,71 +757,43 @@ class TestLongerSequences(unittest.TestCase):
 class TestVaryingModelSizes(unittest.TestCase):
     """Test that properties hold under various model sizes (512, 1024, 2048 columns)."""
     
-    def test_spatial_pooler_512_columns(self):
-        """Test spatial pooler with 512 columns."""
+    # Tolerance as percentage of expected count for sparsity checking
+    SPARSITY_TOLERANCE_PCT = 0.5  # 50% tolerance
+    
+    def _test_spatial_pooler_with_size(self, input_size, num_columns, sparsity=0.02):
+        """Helper method to test spatial pooler with given size parameters."""
         np.random.seed(42)
         sp = SpatialPoolerLayer(
-            input_size=256,
-            num_columns=512,
-            sparsity=0.02,
+            input_size=input_size,
+            num_columns=num_columns,
+            sparsity=sparsity,
             learning_rate=1.0
         )
         
         # Run multiple iterations
         for _ in range(10):
-            input_vector = np.random.randint(0, 2, size=256).astype(float)
+            input_vector = np.random.randint(0, 2, size=input_size).astype(float)
             sp.set_input(input_vector)
             sp.compute(learn=True)
             
             # Should maintain sparsity
             active_count = len(sp.active_cells)
             expected_count = int(sp.num_columns * sp.sparsity)
+            tolerance = int(expected_count * self.SPARSITY_TOLERANCE_PCT)
             self.assertGreater(active_count, 0)
-            self.assertLessEqual(active_count, expected_count + 10)
+            self.assertLessEqual(active_count, expected_count + tolerance)
+    
+    def test_spatial_pooler_512_columns(self):
+        """Test spatial pooler with 512 columns."""
+        self._test_spatial_pooler_with_size(input_size=256, num_columns=512)
     
     def test_spatial_pooler_1024_columns(self):
         """Test spatial pooler with 1024 columns."""
-        np.random.seed(42)
-        sp = SpatialPoolerLayer(
-            input_size=512,
-            num_columns=1024,
-            sparsity=0.02,
-            learning_rate=1.0
-        )
-        
-        # Run multiple iterations
-        for _ in range(10):
-            input_vector = np.random.randint(0, 2, size=512).astype(float)
-            sp.set_input(input_vector)
-            sp.compute(learn=True)
-            
-            # Should maintain sparsity
-            active_count = len(sp.active_cells)
-            expected_count = int(sp.num_columns * sp.sparsity)
-            self.assertGreater(active_count, 0)
-            self.assertLessEqual(active_count, expected_count + 20)
+        self._test_spatial_pooler_with_size(input_size=512, num_columns=1024)
     
     def test_spatial_pooler_2048_columns(self):
         """Test spatial pooler with 2048 columns."""
-        np.random.seed(42)
-        sp = SpatialPoolerLayer(
-            input_size=1024,
-            num_columns=2048,
-            sparsity=0.02,
-            learning_rate=1.0
-        )
-        
-        # Run multiple iterations
-        for _ in range(10):
-            input_vector = np.random.randint(0, 2, size=1024).astype(float)
-            sp.set_input(input_vector)
-            sp.compute(learn=True)
-            
-            # Should maintain sparsity
-            active_count = len(sp.active_cells)
-            expected_count = int(sp.num_columns * sp.sparsity)
-            self.assertGreater(active_count, 0)
-            self.assertLessEqual(active_count, expected_count + 40)
+        self._test_spatial_pooler_with_size(input_size=1024, num_columns=2048)
     
     def test_temporal_memory_512_columns(self):
         """Test temporal memory with 512 columns."""
@@ -1136,8 +1108,6 @@ class TestTemporalPrediction(unittest.TestCase):
             
             # Every 3 epochs, test prediction
             if epoch % 3 == 2:
-                tm_copy_state = (tm.active_cells.copy(), tm.predictive_cells.copy())
-                
                 # Count predictions in the sequence
                 pred_count = 0
                 for active_cols in sequence:
