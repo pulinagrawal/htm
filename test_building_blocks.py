@@ -1052,7 +1052,7 @@ class TestTemporalPrediction(unittest.TestCase):
         seq_c = {50, 60, 70, 80, 90}
         sequence = [seq_a, seq_b, seq_c]
         
-        # Learn the sequence multiple times WITHOUT reset (to learn transitions)
+        # Learn the sequence multiple times without reset between steps within each sequence (to learn transitions), but with reset between full sequence repetitions
         for epoch in range(30):
             for active_cols in sequence:
                 tm.set_active_columns(active_cols)
