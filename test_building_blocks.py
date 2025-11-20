@@ -839,10 +839,13 @@ class TestVaryingModelSizes(unittest.TestCase):
         ]
         
         # Learn the sequence
-        for _ in range(5):
+        for epoch in range(5):
             for active_cols in sequence:
                 tm.set_active_columns(active_cols)
                 tm.compute(learn=True)
+            # Reset between sequence repetitions
+            if epoch < 4:
+                tm.reset()
         
         # Should create segments
         total_segments = sum(len(cell.segments) for cell in tm.get_cells())
@@ -865,10 +868,13 @@ class TestVaryingModelSizes(unittest.TestCase):
         ]
         
         # Learn the sequence
-        for _ in range(5):
+        for epoch in range(5):
             for active_cols in sequence:
                 tm.set_active_columns(active_cols)
                 tm.compute(learn=True)
+            # Reset between sequence repetitions
+            if epoch < 4:
+                tm.reset()
         
         # Should create segments
         total_segments = sum(len(cell.segments) for cell in tm.get_cells())
@@ -1074,10 +1080,6 @@ class TestTemporalPrediction(unittest.TestCase):
         tm.compute(learn=False)
         
         # After B, should have predictions for next step
-        # After learning the sequence multiple times, TM should predict C's columns
-        prediction_count = len(tm.predictive_cells)
-        
-        # If no predictions after B, try checking after the full learned sequence
         # The test verifies that TM creates segments to learn sequences
         total_segments = sum(len(cell.segments) for cell in tm.get_cells())
         self.assertGreater(total_segments, 0,
@@ -1113,6 +1115,8 @@ class TestTemporalPrediction(unittest.TestCase):
             
             # Every 3 epochs, test prediction
             if epoch % 3 == 2:
+                # Reset before testing
+                tm.reset()
                 # Count predictions in the sequence
                 pred_count = 0
                 for active_cols in sequence:
@@ -1155,18 +1159,6 @@ class TestTemporalPrediction(unittest.TestCase):
         total_segments = sum(len(cell.segments) for cell in tm.get_cells())
         self.assertGreater(total_segments, 0,
                           "TM should create segments during sequence learning")
-        
-        # Test that running through learned sequence produces some predictions
-        tm.reset()
-        has_any_predictions = False
-        
-        for i, active_cols in enumerate(sequence):
-            tm.set_active_columns(active_cols)
-            tm.compute(learn=False)
-            
-            # After the first step, check if we ever get predictions
-            if i > 0 and len(tm.predictive_cells) > 0:
-                has_any_predictions = True
         
         # The test verifies learning occurred via segment creation
         # Predictions may or may not occur depending on random initialization
