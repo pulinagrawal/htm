@@ -1,5 +1,3 @@
-from sre_constants import IN
-from turtle import pos
 import numpy as np
 
 from typing import (
@@ -82,6 +80,12 @@ class SpatialPooler:
         self.num_columns = num_columns
         self.input_size = input_size
         self.columns = self._initialize_columns(num_columns, input_size, potential_receptive_field_pct)
+        # Multi-field metadata
+        self.field_ranges = {}
+        self.field_order = []
+        self.column_field_map = {}
+        # Store current input indices for learning
+        self.current_input_indices = set()
 
     def _initialize_columns(self, num_columns: int, input_size: int, potential_receptive_field_pct: float) -> List[Column]:
         columns = []
