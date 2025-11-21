@@ -87,7 +87,7 @@ class TestBasicBuildingBlocks(unittest.TestCase):
         segment = Segment([syn1, syn2, syn3])
         active_cells = {cell1, cell2}
         
-        matching_syns = segment.matching_synapses(active_cells)
+        matching_syns = segment.get_synapses_to_active_cells(active_cells)
         self.assertEqual(len(matching_syns), 2)
         self.assertIn(syn1, matching_syns)
         self.assertIn(syn2, matching_syns)  # Included despite low permanence
