@@ -40,6 +40,19 @@ class Cell:
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
 
+    def find_best_segment(self, active_cells: Set['Cell'], return_match=False) -> Union[Optional['Segment'], Tuple[Optional['Segment'], int]]:
+        """Find segment on cell with most synapses to active cells."""
+        best_segment = None
+        max_synapses_to_active_cells = -1
+        
+        # Find segment with most synapses to active cells
+        for segment in self.segments:
+            synapses_to_active_cells = segment.get_synapses_to_active_cells(active_cells)
+            if len(synapses_to_active_cells) > max_synapses_to_active_cells:
+                max_synapses_to_active_cells = len(synapses_to_active_cells)
+                best_segment = segment
+
+        return (best_segment, max_synapses_to_active_cells) if return_match else best_segment
 
 class DistalSynapse:
     """Distal synapse connecting to a source cell."""
@@ -52,18 +65,43 @@ class DistalSynapse:
 class Segment:
     """Distal segment composed of synapses to cells."""
     
-    def __init__(self, synapses: Optional[List[DistalSynapse]] = None) -> None:
+    def __init__(
+        self,
+        synapses: Optional[List[DistalSynapse]] = None,
+        activation_threshold: Optional[int] = None,
+    ) -> None:
         self.synapses: List[DistalSynapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
-        
+        self.activation_threshold: int = (
+            activation_threshold if activation_threshold is not None else ACTIVATION_THRESHOLD
+        )
+    
     def active_synapses(self, active_cells: Set[Cell], connected_perm: float = CONNECTED_PERM) -> List[DistalSynapse]:
         """Return connected synapses whose source cell is active."""
         return [syn for syn in self.synapses 
                 if syn.source_cell in active_cells and syn.permanence >= connected_perm]
     
-    def matching_synapses(self, active_cells: Set[Cell]) -> List[DistalSynapse]:
+    def get_synapses_to_active_cells(self, active_cells: Set[Cell]) -> List[DistalSynapse]:
         """Return synapses whose source cell is active (ignores permanence threshold)."""
         return [syn for syn in self.synapses if syn.source_cell in active_cells]
+    
+    def meets_activation_threshold(
+        self,
+        active_cells: Set[Cell],
+        threshold: Optional[int] = None,
+        connected_perm: float = CONNECTED_PERM,
+    ) -> bool:
+        """Return True if segment has at least threshold connected synapses to active cells."""
+        effective_threshold = self.activation_threshold if threshold is None else threshold
+        if effective_threshold <= 0:
+            return True
+        count = 0
+        for syn in self.synapses:
+            if syn.permanence >= connected_perm and syn.source_cell in active_cells:
+                count += 1
+                if count >= effective_threshold:
+                    return True
+        return False
 
 
 class ProximalSynapse:
@@ -216,9 +254,46 @@ class TemporalMemoryLayer(Layer):
         # Phase 2: Activate dendrites for next timestep
         self._activate_dendrites()
         
-    def set_active_columns(self, active_column_indices: Set[int]) -> None:
+    def set_active_columns(self, active_columns: Union[Set[int], Sequence[int], np.ndarray]) -> None:
         """Set which columns are active (typically from spatial pooler)."""
-        self.active_columns = active_column_indices.copy()
+        if isinstance(active_columns, set):
+            self.active_columns = active_columns.copy()
+            return
+        
+        if isinstance(active_columns, np.ndarray):
+            vector = np.asarray(active_columns).ravel()
+            treat_as_binary = (
+                vector.size == self.num_columns and
+                (vector.dtype == np.bool_ or np.all((vector == 0) | (vector == 1)))
+            )
+            if treat_as_binary:
+                self.active_columns = set(map(int, np.flatnonzero(vector)))
+            else:
+                self.active_columns = set(map(int, vector.tolist()))
+            return
+        
+        if isinstance(active_columns, Sequence):
+            if isinstance(active_columns, (str, bytes)):
+                raise TypeError("Active column sequence must not be a string/bytes.")
+            
+            seq_len = len(active_columns)
+            if seq_len == self.num_columns:
+                active_set: Set[int] = set()
+                is_binary = True
+                for idx, value in enumerate(active_columns):
+                    if value not in (0, 1, False, True):
+                        is_binary = False
+                        break
+                    if value:
+                        active_set.add(idx)
+                if is_binary:
+                    self.active_columns = active_set
+                    return
+            
+            self.active_columns = set(map(int, active_columns))
+            return
+        
+        raise TypeError("Unsupported type for active_column_indices")
         
     def _activate_cells(self, learn: bool) -> None:
         """Activate cells based on active columns and predictions."""
@@ -236,24 +311,27 @@ class TemporalMemoryLayer(Layer):
             if predicted_cells:
                 # Activate predicted cells
                 for cell in predicted_cells:
+                    # TODO: Add ability to inhibit to maintain sparsity
                     new_active_cells.add(cell)
                     new_winner_cells.add(cell)
                     
                     if learn:
                         # Learn on active segments
                         for segment in cell.segments:
-                            active_syns = segment.active_synapses(self.prev_active_cells)
-                            if len(active_syns) >= self.activation_threshold:
-                                self._adapt_segment(segment, self.prev_active_cells, True)
+                            if segment.meets_activation_threshold(self.prev_active_cells):
+                                # increase permanence to prev active cells and decrease others
+                                self._strengthen_segment(segment, self.prev_active_cells)
             else:
                 # Burst column - activate all cells
                 for cell in column.cells:
                     new_active_cells.add(cell)
                 
-                # Choose a winner cell
+                # Choose a winner cell based on segment with highest active cell count or fewest segments
                 winner_cell = self._get_best_matching_cell(column, self.prev_active_cells)
                 new_winner_cells.add(winner_cell)
                 
+                # TODO: Possibly the learn in previous if-block and here can be combined to
+                # simplify code 
                 if learn:
                     # Learn on winner cell
                     self._learn_on_cell(winner_cell, self.prev_active_cells)
@@ -271,79 +349,78 @@ class TemporalMemoryLayer(Layer):
         for column in self.columns:
             for cell in column.cells:
                 for segment in cell.segments:
-                    active_syns = segment.active_synapses(self.active_cells)
-                    if len(active_syns) >= self.activation_threshold:
+                    if segment.meets_activation_threshold(self.active_cells):
                         new_predictive_cells.add(cell)
                         break
         
         self.predictive_cells = new_predictive_cells
         
-    def _get_best_matching_cell(self, column: Column, active_cells: Set[Cell]) -> Cell:
-        """Find cell with best matching segment, or least used cell."""
+    def _get_best_matching_cell(self, column: Column, cell_activations: Set[Cell]) -> Cell:
+        """Select cell whose segment has most synapses to
+           the input cell activations (typically prev active cells);
+             fallback to cell with fewest segments.
+        """
         best_cell = None
-        best_segment = None
-        max_matching = -1
+        highest_synapse_count = -1
         
+        # Find a cell with segment that has most synapses to cell activations
         for cell in column.cells:
-            for segment in cell.segments:
-                matching_syns = segment.matching_synapses(active_cells)
-                if len(matching_syns) > max_matching:
-                    max_matching = len(matching_syns)
-                    best_cell = cell
-                    best_segment = segment
+            _, max_synapses_to_active_cells  = cell.find_best_segment(cell_activations, return_match=True)
+            if max_synapses_to_active_cells > highest_synapse_count:
+                highest_synapse_count = max_synapses_to_active_cells
+                best_cell = cell
         
         if best_cell is None:
-            # Use least used cell
+            # Select cell with fewest segments 
             best_cell = min(column.cells, key=lambda c: len(c.segments))
         
         return best_cell
     
-    def _learn_on_cell(self, cell: Cell, active_cells: Set[Cell]) -> None:
+
+    def _learn_on_cell(self, cell: Cell, cell_activations: Set[Cell]) -> None:
         """Create or adapt segment on cell to learn pattern."""
-        # Find best matching segment
-        best_segment = None
-        max_matching = -1
+        # Find segment with most synapses to the cell activations
+        best_segment, synapses_to_active_cells = cell.find_best_segment(cell_activations, return_match=True)
         
-        for segment in cell.segments:
-            matching_syns = segment.matching_synapses(active_cells)
-            if len(matching_syns) > max_matching:
-                max_matching = len(matching_syns)
-                best_segment = segment
-        
-        if best_segment is None or max_matching < self.learning_threshold:
+        if best_segment is None or synapses_to_active_cells < self.learning_threshold:
             # Create new segment
-            best_segment = Segment()
+            best_segment = Segment(activation_threshold=self.activation_threshold)
             cell.segments.append(best_segment)
         
         # Adapt segment
-        self._adapt_segment(best_segment, active_cells, False)
-        
-    def _adapt_segment(self, segment: Segment, active_cells: Set[Cell], 
-                       reinforce_only: bool = False) -> None:
-        """Adapt segment synapses based on active cells."""
-        # Get synapse sources
-        synapse_sources = {syn.source_cell for syn in segment.synapses}
-        
+        self._strengthen_segment(best_segment, cell_activations)
+        self._grow_segment(best_segment, cell_activations)
+    
+    def _strengthen_segment(self, segment: Segment, active_cells: Set[Cell]) -> None:
         # Strengthen synapses to active cells
         for syn in segment.synapses:
             if syn.source_cell in active_cells:
                 self._adjust_permanence(syn, increase=True)
-            elif not reinforce_only:
+            else:
                 self._adjust_permanence(syn, increase=False)
+
+    def _grow_segment(self, segment: Segment, active_cells: Set[Cell]) -> None:
+        """Adapt segment synapses based on active cells."""
+        # Get synapse sources
+        synapse_sources = {syn.source_cell for syn in segment.synapses}
         
-        # Add new synapses
-        if not reinforce_only:
-            candidates = list(active_cells - synapse_sources)
-            if candidates:
-                num_to_add = min(len(candidates), 
-                               self.max_new_synapse_count - len(segment.synapses))
-                if num_to_add > 0:
-                    sample = np.random.choice(len(candidates), 
-                                            size=min(num_to_add, self.sample_size),
-                                            replace=False)
-                    for idx in sample:
-                        new_syn = DistalSynapse(candidates[idx], self.initial_permanence)
-                        segment.synapses.append(new_syn)
+        # TODO: Extract this logic to a utility function
+        
+        # Grow new synapses on this segement to active cells not already connected
+        # Find candidates for new synapses
+        candidates = list(active_cells - synapse_sources)
+        if candidates:
+            # Limit number of new synapses on this segment by max_new_synapse_count or 
+            # available candidates
+            num_to_add = min(len(candidates), 
+                            self.max_new_synapse_count - len(segment.synapses))
+            if num_to_add > 0:
+                sample = np.random.choice(len(candidates), 
+                                        size=min(num_to_add, self.sample_size),
+                                        replace=False)
+                for idx in sample:
+                    new_syn = DistalSynapse(candidates[idx], self.initial_permanence)
+                    segment.synapses.append(new_syn)
     
     def reset(self) -> None:
         """Reset layer state."""
@@ -563,8 +640,7 @@ class CustomDistalLayer(Layer):
             has_active_segment = False
             
             for segment in cell.segments:
-                active_syns = segment.active_synapses(input_active_cells)
-                if len(active_syns) >= self.activation_threshold:
+                if segment.meets_activation_threshold(input_active_cells):
                     has_active_segment = True
                     new_active_cells.add(cell)
                     
@@ -591,7 +667,7 @@ class CustomDistalLayer(Layer):
         if not active_cells:
             return
         
-        new_segment = Segment()
+        new_segment = Segment(activation_threshold=self.activation_threshold)
         
         # Sample from active cells
         active_list = list(active_cells)
