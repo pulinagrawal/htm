@@ -163,7 +163,6 @@ class Layer(ABC):
         self.learning_rate: float = learning_rate  # Scales permanence changes
         self.input_layers: List['Layer'] = []
         self.active_cells: Set[Cell] = set()
-        self.winner_cells: Set[Cell] = set()
         
     @abstractmethod
     def compute(self, learn: bool = True) -> None:
@@ -244,7 +243,6 @@ class TemporalMemoryLayer(Layer):
         self.active_columns: Set[int] = set()
         self.predictive_cells: Set[Cell] = set()
         self.prev_active_cells: Set[Cell] = set()
-        self.prev_winner_cells: Set[Cell] = set()
         
     def compute(self, learn: bool = True) -> None:
         """Compute temporal memory activations."""
@@ -298,7 +296,6 @@ class TemporalMemoryLayer(Layer):
     def _activate_cells(self, learn: bool) -> None:
         """Activate cells based on active columns and predictions."""
         new_active_cells: Set[Cell] = set()
-        new_winner_cells: Set[Cell] = set()
         
         for col_idx in self.active_columns:
             if col_idx >= len(self.columns):
@@ -313,7 +310,6 @@ class TemporalMemoryLayer(Layer):
                 for cell in predicted_cells:
                     # TODO: Add ability to inhibit to maintain sparsity
                     new_active_cells.add(cell)
-                    new_winner_cells.add(cell)
                     
                     if learn:
                         # Learn on active segments
@@ -328,7 +324,6 @@ class TemporalMemoryLayer(Layer):
                 
                 # Choose a winner cell based on segment with highest active cell count or fewest segments
                 winner_cell = self._get_best_matching_cell(column, self.prev_active_cells)
-                new_winner_cells.add(winner_cell)
                 
                 # TODO: Possibly the learn in previous if-block and here can be combined to
                 # simplify code 
@@ -338,9 +333,7 @@ class TemporalMemoryLayer(Layer):
         
         # Update state
         self.prev_active_cells = self.active_cells.copy()
-        self.prev_winner_cells = self.winner_cells.copy()
         self.set_active_cells(new_active_cells)
-        self.winner_cells = new_winner_cells
         
     def _activate_dendrites(self) -> None:
         """Update predictive cells for next timestep."""
@@ -425,10 +418,8 @@ class TemporalMemoryLayer(Layer):
     def reset(self) -> None:
         """Reset layer state."""
         self.active_cells.clear()
-        self.winner_cells.clear()
         self.predictive_cells.clear()
         self.prev_active_cells.clear()
-        self.prev_winner_cells.clear()
         self.active_columns.clear()
         for column in self.columns:
             column.active = False
@@ -525,7 +516,6 @@ class SpatialPoolerLayer(Layer):
             new_active_cells.add(col.cells[0])
         
         self.set_active_cells(new_active_cells)
-        self.winner_cells = new_active_cells.copy()
         
     def set_input(self, input_vector: np.ndarray) -> None:
         """Set input for spatial pooling."""
@@ -560,7 +550,6 @@ class SpatialPoolerLayer(Layer):
     def reset(self) -> None:
         """Reset layer state."""
         self.active_cells.clear()
-        self.winner_cells.clear()
         self.input_vector = None
         for column in self.columns:
             column.active = False
@@ -654,7 +643,6 @@ class CustomDistalLayer(Layer):
                 self._create_new_segment(cell, input_active_cells)
         
         self.set_active_cells(new_active_cells)
-        self.winner_cells = new_active_cells.copy()
     
     def _strengthen_segment(self, segment: Segment, active_cells: Set[Cell]) -> None:
         """Strengthen synapses to active cells in segment."""
@@ -683,7 +671,6 @@ class CustomDistalLayer(Layer):
     def reset(self) -> None:
         """Reset layer state."""
         self.active_cells.clear()
-        self.winner_cells.clear()
         for cell in self.cells_list:
             cell.active = False
     
@@ -778,7 +765,6 @@ class SparseyInspiredSpatialPooler(Layer):
             new_active_cells.add(col.cells[0])
         
         self.set_active_cells(new_active_cells)
-        self.winner_cells = new_active_cells.copy()
     
     def set_input(self, input_vector: np.ndarray) -> None:
         """Set input for spatial pooling."""
@@ -816,7 +802,6 @@ class SparseyInspiredSpatialPooler(Layer):
     def reset(self) -> None:
         """Reset layer state."""
         self.active_cells.clear()
-        self.winner_cells.clear()
         self.input_vector = None
         for neighborhood in self.neighborhoods:
             for column in neighborhood:
