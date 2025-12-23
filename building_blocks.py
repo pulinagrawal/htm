@@ -19,8 +19,8 @@ INHIBITION_RADIUS = 1.0  # Sets the locality radius for desired sparsity
 ACTIVATION_THRESHOLD = 3  # Number of active connected synapses for a segment to be active
 LEARNING_THRESHOLD = 5  # Threshold of active synapses for a segment to be considered for learning
 INITIAL_PERMANENCE = 0.21  # Initial permanence for new synapses
-PERMANENCE_INC = 0.01  # Amount by which synapses are incremented during learning
-PERMANENCE_DEC = 0.01  # Amount by which synapses are decremented during learning
+PERMANENCE_INC = 0.05  # Amount by which synapses are incremented during learning
+PERMANENCE_DEC = 0.05  # Amount by which synapses are decremented during learning
 
 
 # ===== Basic Building Blocks =====
@@ -54,13 +54,24 @@ class Cell:
 
         return (best_segment, max_synapses_to_active_cells) if return_match else best_segment
 
-class DistalSynapse:
-    """Distal synapse connecting to a source cell."""
+class Synapse:
     
     def __init__(self, source_cell: Cell, permanence: float) -> None:
         self.source_cell: Cell = source_cell
         self.permanence: float = permanence
 
+    def _adjust_permanence(self, increase: bool, strength: float=1.0) -> None:
+        """Adjust synapse permanence by learning rate."""
+        if increase:
+            self.permanence = min(1.0, self.permanence + PERMANENCE_INC * strength)
+        else:
+            self.permanence = max(0.0, self.permanence - PERMANENCE_DEC * strength)
+
+class DistalSynapse(Synapse):
+    """Distal synapse connecting to a source cell."""
+    
+    def __init__(self, source_cell: Cell, permanence: float) -> None:
+        super().__init__(source_cell, permanence)
 
 class Segment:
     """Distal segment composed of synapses to cells."""
@@ -104,12 +115,11 @@ class Segment:
         return False
 
 
-class ProximalSynapse:
+class ProximalSynapse(Synapse):
     """Proximal synapse connecting to an input bit."""
-    
     def __init__(self, source_input: int, permanence: float) -> None:
-        self.source_input: int = source_input
-        self.permanence: float = permanence
+        super().__init__(source_cell=None, permanence=permanence)
+        self.source_input: int = source_input  # Index of input bit this synapse connects to
 
 
 class Column:
@@ -198,13 +208,6 @@ class Layer(ABC):
         for cell in self.active_cells:
             cell.active = True
     
-    def _adjust_permanence(self, synapse: Union[DistalSynapse, ProximalSynapse], 
-                          increase: bool) -> None:
-        """Adjust synapse permanence by learning rate."""
-        if increase:
-            synapse.permanence = min(1.0, synapse.permanence + PERMANENCE_INC * self.learning_rate)
-        else:
-            synapse.permanence = max(0.0, synapse.permanence - PERMANENCE_DEC * self.learning_rate)
 
 
 # ===== Temporal Memory Layer =====
@@ -223,7 +226,7 @@ class TemporalMemoryLayer(Layer):
                  activation_threshold: int = ACTIVATION_THRESHOLD,
                  learning_threshold: int = LEARNING_THRESHOLD,
                  max_new_synapse_count: int = 20,
-                 segment_growth_speed: int = 1,
+                 segment_growth_speed: float = 1.0,
                  initial_permanence: float = INITIAL_PERMANENCE) -> None:
         super().__init__(name, learning_rate)
         self.num_columns = num_columns
@@ -241,6 +244,7 @@ class TemporalMemoryLayer(Layer):
             self.columns.append(col)
         
         self.active_columns: Set[int] = set()
+        self.bursting_columns: Set[int] = set()
         self.predictive_cells: Set[Cell] = set()
         self.prev_active_cells: Set[Cell] = set()
         
@@ -253,7 +257,9 @@ class TemporalMemoryLayer(Layer):
         self._activate_dendrites()
         
     def set_active_columns(self, active_columns: Union[Set[int], Sequence[int], np.ndarray]) -> None:
-        """Set which columns are active (typically from spatial pooler)."""
+        """Set which columns are active (typically from spatial pooler).
+        self.active_columns is like [3, 7, 13, ...]
+        """
         if isinstance(active_columns, set):
             self.active_columns = active_columns.copy()
             return
@@ -296,6 +302,7 @@ class TemporalMemoryLayer(Layer):
     def _activate_cells(self, learn: bool) -> None:
         """Activate cells based on active columns and predictions."""
         new_active_cells: Set[Cell] = set()
+        new_bursting_columns: Set[int] = set()
         
         for col_idx in self.active_columns:
             if col_idx >= len(self.columns):
@@ -319,6 +326,7 @@ class TemporalMemoryLayer(Layer):
                                 self._strengthen_segment(segment, self.prev_active_cells)
             else:
                 # Burst column - activate all cells
+                new_bursting_columns.add(col_idx)
                 for cell in column.cells:
                     new_active_cells.add(cell)
                 
@@ -327,11 +335,13 @@ class TemporalMemoryLayer(Layer):
                 
                 # TODO: Possibly the learn in previous if-block and here can be combined to
                 # simplify code 
+                # TODO: More bursting more the learning_rate
                 if learn:
                     # Learn on winner cell
                     self._learn_on_cell(winner_cell, self.prev_active_cells)
         
         # Update state
+        self.bursting_columns = new_bursting_columns
         self.prev_active_cells = self.active_cells.copy()
         self.set_active_cells(new_active_cells)
         
@@ -398,9 +408,9 @@ class TemporalMemoryLayer(Layer):
         # Strengthen synapses to active cells
         for syn in segment.synapses:
             if syn.source_cell in prev_active_cells:
-                self._adjust_permanence(syn, increase=True)
+                syn._adjust_permanence(increase=True, strength=self.learning_rate)
             else:
-                self._adjust_permanence(syn, increase=False)
+                syn._adjust_permanence(increase=False, strength=self.learning_rate)
 
     def _grow_segment(self, segment: Segment, prev_active_cells: Set[Cell]) -> None:
         """Adapt segment synapses based on active cells."""
@@ -415,7 +425,13 @@ class TemporalMemoryLayer(Layer):
         available_synapses = self.max_new_synapse_count - len(segment.synapses)
         num_to_add = min(len(candidates), available_synapses)
         if num_to_add > 0:
-            sample = np.random.choice(len(candidates), size=num_to_add*self.segment_growth_speed, replace=False)
+            try:
+                sample = np.random.choice(len(candidates), size=int(num_to_add*self.segment_growth_speed), replace=False)
+            except ValueError:
+                # print for debugging
+                print("ValueError in np.random.choice: num_to_add =", num_to_add, "candidates len =", len(candidates), 
+                      "segment synapses len =", len(segment.synapses), "segment_growth_speed =", self.segment_growth_speed)
+                raise ValueError("Error in np.random.choice for growing segment synapses.")
             for idx in sample:
                 new_syn = DistalSynapse(candidates[idx], self.initial_permanence)
                 segment.synapses.append(new_syn)

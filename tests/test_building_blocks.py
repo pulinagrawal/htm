@@ -27,6 +27,7 @@ from building_blocks import (
     ACTIVATION_THRESHOLD,
     INITIAL_PERMANENCE,
 )
+from rdse import RandomDistributedScalarEncoder as RDSE, RDSEParameters
 
 
 class TestBasicBuildingBlocks(unittest.TestCase):
@@ -342,6 +343,66 @@ class TestTemporalMemoryLayer(unittest.TestCase):
         # Should have some predictions (at least one step should predict next)
         # This is checking that TM learns temporal patterns
         self.assertGreaterEqual(sum(prediction_counts), 0)  # Changed to >= to be more lenient
+
+    def test_sine_wave_bursting_columns_converge(self):
+        """Test sine-wave RDSE input drives bursting columns to zero after sustained learning."""
+        np.random.seed(42)
+        num_columns = 256
+        tm = TemporalMemoryLayer(
+            num_columns=num_columns,
+            cells_per_column=6,
+            learning_rate=1.0,
+            activation_threshold=1,
+            learning_threshold=1,
+            max_new_synapse_count=24,
+        )
+        params = RDSEParameters(
+            size=num_columns,
+            active_bits=16,
+            sparsity=0.0,
+            radius=0.25,
+            resolution=0.0,
+            category=False,
+            seed=11,
+        )
+        encoder = RDSE(params)
+        cycle_length = 64
+        sine_cycle = np.sin(np.linspace(0, 2 * np.pi, cycle_length, endpoint=False))
+        burst_counts = []
+        total_steps = 1000
+
+        # Feed the TM with a repeating RDSE-encoded sine signal to encourage predictive learning.
+        for step in range(total_steps):
+            value = sine_cycle[step % cycle_length]
+            encoded_bits = encoder.encode(value)
+            active_columns = {idx for idx, bit in enumerate(encoded_bits) if bit}
+            tm.set_active_columns(active_columns)
+            tm.compute(learn=True)
+            burst_counts.append(len(tm.bursting_columns))
+
+        self.assertGreater(
+            max(burst_counts[:10]),
+            0,
+            "Temporal memory should burst before learning the sine-driven sequence.",
+        )
+        self.assertEqual(
+            burst_counts[-1],
+            0,
+            "Bursting columns should converge to zero after 1000 sine inputs.",
+        )
+
+        evaluation_bursts = []
+        for value in sine_cycle:
+            encoded_bits = encoder.encode(value)
+            active_columns = {idx for idx, bit in enumerate(encoded_bits) if bit}
+            tm.set_active_columns(active_columns)
+            tm.compute(learn=False)
+            evaluation_bursts.append(len(tm.bursting_columns))
+
+        self.assertTrue(
+            all(count == 0 for count in evaluation_bursts),
+            f"Expected no bursting once the sine sequence is mastered, got {evaluation_bursts}",
+        )
 
 
 class TestCustomDistalLayer(unittest.TestCase):
