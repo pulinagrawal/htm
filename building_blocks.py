@@ -186,8 +186,12 @@ class Layer(ABC):
         self.column_field_map: Dict['Column', Optional[str]] = {}
         
     @abstractmethod
-    def compute(self, learn: bool = True) -> None:
-        """Compute layer activations."""
+    def compute(
+        self,
+        input: Optional[Union[Set[int], Sequence[int], np.ndarray, InputComposite]] = None,
+        learn: bool = True,
+    ) -> None:
+        """Compute layer activations given new input or previously set state."""
         pass
     
     @abstractmethod
@@ -365,8 +369,15 @@ class TemporalMemoryLayer(Layer):
         self.predictive_cells: Set[Cell] = set()
         self.prev_active_cells: Set[Cell] = set()
         
-    def compute(self, learn: bool = True) -> None:
+    def compute(
+        self,
+        input: Optional[Union[Set[int], Sequence[int], np.ndarray, InputComposite]] = None,
+        learn: bool = True,
+    ) -> None:
         """Compute temporal memory activations."""
+        if input is not None:
+            self.set_active_columns(input)
+
         # Phase 1: Activate cells
         self._activate_cells(learn)
         
@@ -648,10 +659,19 @@ class SpatialPoolerLayer(Layer):
         
         self.input_vector: Optional[np.ndarray] = None
         
-    def compute(self, learn: bool = True) -> None:
+    def compute(
+        self,
+        input: Optional[Union[Set[int], Sequence[int], np.ndarray, InputComposite]] = None,
+        learn: bool = True,
+    ) -> None:
         """Compute spatial pooling."""
+        if input is not None:
+            self.set_input(input)
+
         if self.input_vector is None:
-            return
+            raise ValueError(
+                "SpatialPoolerLayer.compute() requires input or a prior set_input() call."
+            )
         
         # Phase 1: Compute overlap
         for column in self.columns:
@@ -672,7 +692,7 @@ class SpatialPoolerLayer(Layer):
         
         self.set_active_cells(new_active_cells)
         
-    def set_input(self, input_vector: InputComposite) -> None:
+    def set_input(self, input_vector: Union[Set[int], Sequence[int], np.ndarray, InputComposite]) -> None:
         """Set input for spatial pooling."""
         self.input_vector = self.combine_input_fields(input_vector, expected_size=self.input_size)
         
@@ -767,7 +787,11 @@ class CustomDistalLayer(Layer):
         # Create cells
         self.cells_list: List[Cell] = [Cell() for _ in range(num_cells)]
         
-    def compute(self, learn: bool = True) -> None:
+    def compute(
+        self,
+        input: Optional[Union[Set[int], Sequence[int], np.ndarray, InputComposite]] = None,
+        learn: bool = True,
+    ) -> None:
         """Compute activations and learn via fire-together-wire-together."""
         if not self.input_layers:
             return
@@ -896,10 +920,19 @@ class SparseyInspiredSpatialPooler(Layer):
         
         self.input_vector: Optional[np.ndarray] = None
         
-    def compute(self, learn: bool = True) -> None:
+    def compute(
+        self,
+        input: Optional[Union[Set[int], Sequence[int], np.ndarray, InputComposite]] = None,
+        learn: bool = True,
+    ) -> None:
         """Compute spatial pooling with neighborhood constraints."""
+        if input is not None:
+            self.set_input(input)
+
         if self.input_vector is None:
-            return
+            raise ValueError(
+                "SparseyInspiredSpatialPooler.compute() requires input or a prior set_input() call."
+            )
         
         # Compute overlap for all columns
         for neighborhood in self.neighborhoods:
@@ -921,9 +954,9 @@ class SparseyInspiredSpatialPooler(Layer):
         
         self.set_active_cells(new_active_cells)
     
-    def set_input(self, input_vector: np.ndarray) -> None:
+    def set_input(self, input_vector: Union[Set[int], Sequence[int], np.ndarray, InputComposite]) -> None:
         """Set input for spatial pooling."""
-        self.input_vector = input_vector
+        self.input_vector = self.combine_input_fields(input_vector, expected_size=self.input_size)
     
     def _inhibit_neighborhoods(self) -> List[Column]:
         """Apply inhibition within each neighborhood."""
