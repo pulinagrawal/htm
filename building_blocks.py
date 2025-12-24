@@ -22,6 +22,14 @@ INITIAL_PERMANENCE = 0.21  # Initial permanence for new synapses
 PERMANENCE_INC = 0.05  # Amount by which synapses are incremented during learning
 PERMANENCE_DEC = 0.05  # Amount by which synapses are decremented during learning
 
+InputField = Union[np.ndarray, Sequence[int]]
+InputComposite = Union[
+    np.ndarray,
+    Sequence[int],
+    Sequence[InputField],
+    Dict[str, InputField],
+]
+
 
 # ===== Basic Building Blocks =====
 
@@ -56,8 +64,8 @@ class Cell:
 
 class Synapse:
     
-    def __init__(self, source_cell: Cell, permanence: float) -> None:
-        self.source_cell: Cell = source_cell
+    def __init__(self, source_cell: Cell|None, permanence: float) -> None:
+        self.source_cell: Cell|None = source_cell
         self.permanence: float = permanence
 
     def _adjust_permanence(self, increase: bool, strength: float=1.0) -> None:
@@ -173,6 +181,9 @@ class Layer(ABC):
         self.learning_rate: float = learning_rate  # Scales permanence changes
         self.input_layers: List['Layer'] = []
         self.active_cells: Set[Cell] = set()
+        self.field_ranges: Dict[str, Tuple[int, int]] = {}
+        self.field_order: List[str] = []
+        self.column_field_map: Dict['Column', Optional[str]] = {}
         
     @abstractmethod
     def compute(self, learn: bool = True) -> None:
@@ -207,6 +218,112 @@ class Layer(ABC):
         self.active_cells = cells.copy()
         for cell in self.active_cells:
             cell.active = True
+
+    def combine_input_fields(self, input_vector: InputComposite, expected_size: Optional[int] = None) -> np.ndarray:
+        """Combine multi-field inputs into a single binary vector like HTM TemporalPooler."""
+        if isinstance(input_vector, dict):
+            start = 0
+            arrays: List[np.ndarray] = []
+            self.field_ranges = {}
+            self.field_order = []
+            for name, arr in input_vector.items():
+                arr_np = np.asarray(arr, dtype=int).ravel()
+                end = start + arr_np.shape[0]
+                self.field_ranges[name] = (start, end)
+                self.field_order.append(name)
+                arrays.append(arr_np)
+                start = end
+            combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
+            self.column_field_map = {}
+        elif isinstance(input_vector, (list, tuple)):
+            arrays = [np.asarray(v, dtype=int).ravel() for v in input_vector]
+            combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
+        else:
+            combined = np.asarray(input_vector, dtype=int).ravel()
+
+        if expected_size is not None and combined.shape[0] != expected_size:
+            raise ValueError(
+                f"Combined input length {combined.shape[0]} != expected size {expected_size}."
+            )
+
+        if self.field_ranges and any(len(rng) != 2 for rng in self.field_ranges.values()):
+            self.field_ranges = {}
+            self.field_order = []
+            self.column_field_map = {}
+
+        if self.field_ranges and not self.column_field_map:
+            self._assign_column_fields()
+        return combined
+
+    def _assign_column_fields(self) -> None:
+        """Assign dominant field per column based on connected synapse sources."""
+        if not self.field_ranges or not hasattr(self, 'columns'):
+            return
+        columns = getattr(self, 'columns')
+        if not columns:
+            return
+        inv_order = {name: idx for idx, name in enumerate(self.field_order)}
+        for column in columns:
+            counts: Dict[str, int] = {}
+            for syn in getattr(column, 'connected_synapses', []):
+                idx = getattr(syn, 'source_input', None)
+                if idx is None:
+                    continue
+                for field_name, (start, end) in self.field_ranges.items():
+                    if start <= idx < end:
+                        counts[field_name] = counts.get(field_name, 0) + 1
+                        break
+            if counts:
+                best = sorted(
+                    counts.items(),
+                    key=lambda kv: (-kv[1], inv_order.get(kv[0], float('inf')))
+                )[0][0]
+                self.column_field_map[column] = best
+            else:
+                self.column_field_map[column] = None
+
+    def _ensure_field_assignments(self) -> None:
+        """Build column->field assignments when metadata exists but mapping is empty."""
+        if self.field_ranges and not self.column_field_map:
+            self._assign_column_fields()
+
+    def split_indices_by_field(
+        self,
+        column_indices: Set[int],
+        include_all_bucket: bool = True,
+        unassigned_label: str = "__unassigned__",
+    ) -> Dict[str, Set[int]]:
+        """Group column indices by their associated input field."""
+        if not column_indices:
+            return {}
+
+        columns = getattr(self, 'columns', None)
+        indexed_columns: Dict[int, Column] = {}
+        if columns is not None:
+            indexed_columns = {idx: col for idx, col in enumerate(columns)}
+
+        self._ensure_field_assignments()
+
+        buckets: Dict[str, Set[int]] = {}
+        for idx in sorted(column_indices):
+            field_name: Optional[str] = None
+            column = indexed_columns.get(idx)
+            if column is not None and self.column_field_map:
+                field_name = self.column_field_map.get(column)
+
+            if field_name is None and self.field_ranges:
+                for name, (start, end) in self.field_ranges.items():
+                    if start <= idx < end:
+                        field_name = name
+                        break
+
+            bucket_name = field_name if field_name is not None else unassigned_label
+            buckets.setdefault(bucket_name, set()).add(idx)
+
+        if include_all_bucket:
+            buckets["__all__"] = set(column_indices)
+
+        return {key: value for key, value in buckets.items() if value}
     
 
 
@@ -256,12 +373,24 @@ class TemporalMemoryLayer(Layer):
         # Phase 2: Activate dendrites for next timestep
         self._activate_dendrites()
         
-    def set_active_columns(self, active_columns: Union[Set[int], Sequence[int], np.ndarray]) -> None:
+    def set_active_columns(self, active_columns: Union[Set[int], Sequence[int], np.ndarray, InputComposite]) -> None:
         """Set which columns are active (typically from spatial pooler).
         self.active_columns is like [3, 7, 13, ...]
         """
         if isinstance(active_columns, set):
             self.active_columns = active_columns.copy()
+            return
+
+        combined_vector: Optional[np.ndarray] = None
+        if isinstance(active_columns, dict):
+            combined_vector = self.combine_input_fields(active_columns, expected_size=self.num_columns)
+        elif isinstance(active_columns, (list, tuple)) and active_columns:
+            first = active_columns[0]
+            if isinstance(first, (np.ndarray, Sequence)) and not isinstance(first, (str, bytes, int, np.integer, bool)):
+                combined_vector = self.combine_input_fields(active_columns, expected_size=self.num_columns)
+
+        if combined_vector is not None:
+            self.active_columns = set(map(int, np.flatnonzero(combined_vector)))
             return
         
         if isinstance(active_columns, np.ndarray):
@@ -358,15 +487,20 @@ class TemporalMemoryLayer(Layer):
         
         self.predictive_cells = new_predictive_cells
     
-    def get_predicted_columns(self) -> Set[int]:
-        """Return column indices that currently contain predictive cells."""
+    def get_predicted_columns(self, separate_fields: bool = False) -> Union[Set[int], Dict[str, Set[int]]]:
+        """Return predicted column indices, optionally grouped by field metadata."""
         predicted_columns: Set[int] = set()
         if not self.predictive_cells:
-            return predicted_columns
+            return {} if separate_fields else predicted_columns
+
         for idx, column in enumerate(self.columns):
             if any(cell in self.predictive_cells for cell in column.cells):
                 predicted_columns.add(idx)
-        return predicted_columns
+
+        if not separate_fields:
+            return predicted_columns
+
+        return self.split_indices_by_field(predicted_columns)
         
     def _get_best_matching_cell(self, column: Column, cell_activations: Set[Cell]) -> Cell:
         """Select cell whose segment has most synapses to
@@ -538,9 +672,9 @@ class SpatialPoolerLayer(Layer):
         
         self.set_active_cells(new_active_cells)
         
-    def set_input(self, input_vector: np.ndarray) -> None:
+    def set_input(self, input_vector: InputComposite) -> None:
         """Set input for spatial pooling."""
-        self.input_vector = input_vector
+        self.input_vector = self.combine_input_fields(input_vector, expected_size=self.input_size)
         
     def _inhibit_columns(self) -> List[Column]:
         """Apply inhibition to select active columns."""
@@ -561,9 +695,9 @@ class SpatialPoolerLayer(Layer):
             for syn in column.potential_synapses:
                 if syn.source_input < len(self.input_vector):
                     if self.input_vector[syn.source_input]:
-                        self._adjust_permanence(syn, increase=True)
+                        syn._adjust_permanence(increase=True)
                     else:
-                        self._adjust_permanence(syn, increase=False)
+                        syn._adjust_permanence(increase=False)
             
             # Update connected synapses
             column._update_connected_synapses(self.connected_perm)
@@ -813,9 +947,9 @@ class SparseyInspiredSpatialPooler(Layer):
             for syn in column.potential_synapses:
                 if syn.source_input < len(self.input_vector):
                     if self.input_vector[syn.source_input]:
-                        self._adjust_permanence(syn, increase=True)
+                        syn._adjust_permanence(increase=True)
                     else:
-                        self._adjust_permanence(syn, increase=False)
+                        syn._adjust_permanence(increase=False)
             
             # Update connected synapses
             column._update_connected_synapses(self.connected_perm)

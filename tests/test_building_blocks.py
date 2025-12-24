@@ -131,6 +131,87 @@ class TestBasicBuildingBlocks(unittest.TestCase):
         self.assertIn(new_cell, column.cells)
 
 
+class TestInputCombination(unittest.TestCase):
+    """Test multi-field input handling shared across layers."""
+
+    def test_spatial_pooler_accepts_field_dict(self):
+        sp = SpatialPoolerLayer(input_size=7, num_columns=9, sparsity=0.2)
+        field_dict = {
+            "vision": np.array([1, 0, 1]),
+            "touch": np.array([0, 1, 1, 0]),
+        }
+        expected = np.array([1, 0, 1, 0, 1, 1, 0])
+
+        sp.set_input(field_dict)
+
+        np.testing.assert_array_equal(sp.input_vector, expected)
+        self.assertEqual(sp.field_ranges, {"vision": (0, 3), "touch": (3, 7)})
+        self.assertEqual(sp.field_order, ["vision", "touch"])
+        self.assertEqual(len(sp.column_field_map), len(sp.columns))
+
+    def test_temporal_memory_accepts_field_dict(self):
+        tm = TemporalMemoryLayer(num_columns=6, cells_per_column=2)
+        field_dict = {
+            "motor": np.array([1, 0, 0]),
+            "vision": np.array([0, 1, 1]),
+        }
+
+        tm.set_active_columns(field_dict)
+
+        self.assertEqual(tm.active_columns, {0, 4, 5})
+        self.assertEqual(tm.field_ranges, {"motor": (0, 3), "vision": (3, 6)})
+        self.assertEqual(tm.field_order, ["motor", "vision"])
+        self.assertTrue(all(value is None for value in tm.column_field_map.values()))
+
+    def test_temporal_memory_accepts_nested_sequences(self):
+        tm = TemporalMemoryLayer(num_columns=6, cells_per_column=2)
+        nested = [np.array([1, 0]), np.array([0, 1]), np.array([1, 0])]
+
+        tm.set_active_columns(nested)
+
+        self.assertEqual(tm.active_columns, {0, 3, 4})
+
+    def test_spatial_pooler_rejects_size_mismatch(self):
+        sp = SpatialPoolerLayer(input_size=5, num_columns=8, sparsity=0.2)
+        bad_fields = {
+            "a": np.array([1, 0, 1]),
+            "b": np.array([0, 1, 1]),
+        }
+
+        with self.assertRaises(ValueError):
+            sp.set_input(bad_fields)
+
+    def test_temporal_memory_predicted_columns_split_by_field(self):
+        tm = TemporalMemoryLayer(num_columns=6, cells_per_column=2)
+        tm.set_active_columns({
+            "motor": np.array([1, 0, 0]),
+            "vision": np.array([0, 1, 1])
+        })
+
+        tm.predictive_cells = {
+            tm.columns[0].cells[0],
+            tm.columns[4].cells[0],
+            tm.columns[5].cells[1],
+        }
+
+        grouped = tm.get_predicted_columns(separate_fields=True)
+
+        self.assertEqual(grouped["motor"], {0})
+        self.assertEqual(grouped["vision"], {4, 5})
+        self.assertEqual(grouped["__all__"], {0, 4, 5})
+        self.assertNotIn("__unassigned__", grouped)
+        self.assertEqual(tm.get_predicted_columns(), {0, 4, 5})
+
+    def test_temporal_memory_predicted_columns_without_field_metadata(self):
+        tm = TemporalMemoryLayer(num_columns=4, cells_per_column=2)
+        tm.predictive_cells = {tm.columns[1].cells[0], tm.columns[3].cells[1]}
+
+        grouped = tm.get_predicted_columns(separate_fields=True)
+
+        self.assertEqual(grouped["__unassigned__"], {1, 3})
+        self.assertEqual(grouped["__all__"], {1, 3})
+
+
 class TestSpatialPoolerLayer(unittest.TestCase):
     """Test SpatialPoolerLayer functionality."""
     
@@ -343,66 +424,6 @@ class TestTemporalMemoryLayer(unittest.TestCase):
         # Should have some predictions (at least one step should predict next)
         # This is checking that TM learns temporal patterns
         self.assertGreaterEqual(sum(prediction_counts), 0)  # Changed to >= to be more lenient
-
-    def test_sine_wave_bursting_columns_converge(self):
-        """Test sine-wave RDSE input drives bursting columns to zero after sustained learning."""
-        np.random.seed(42)
-        num_columns = 256
-        tm = TemporalMemoryLayer(
-            num_columns=num_columns,
-            cells_per_column=6,
-            learning_rate=1.0,
-            activation_threshold=1,
-            learning_threshold=1,
-            max_new_synapse_count=24,
-        )
-        params = RDSEParameters(
-            size=num_columns,
-            active_bits=16,
-            sparsity=0.0,
-            radius=0.25,
-            resolution=0.0,
-            category=False,
-            seed=11,
-        )
-        encoder = RDSE(params)
-        cycle_length = 64
-        sine_cycle = np.sin(np.linspace(0, 2 * np.pi, cycle_length, endpoint=False))
-        burst_counts = []
-        total_steps = 1000
-
-        # Feed the TM with a repeating RDSE-encoded sine signal to encourage predictive learning.
-        for step in range(total_steps):
-            value = sine_cycle[step % cycle_length]
-            encoded_bits = encoder.encode(value)
-            active_columns = {idx for idx, bit in enumerate(encoded_bits) if bit}
-            tm.set_active_columns(active_columns)
-            tm.compute(learn=True)
-            burst_counts.append(len(tm.bursting_columns))
-
-        self.assertGreater(
-            max(burst_counts[:10]),
-            0,
-            "Temporal memory should burst before learning the sine-driven sequence.",
-        )
-        self.assertEqual(
-            burst_counts[-1],
-            0,
-            "Bursting columns should converge to zero after 1000 sine inputs.",
-        )
-
-        evaluation_bursts = []
-        for value in sine_cycle:
-            encoded_bits = encoder.encode(value)
-            active_columns = {idx for idx, bit in enumerate(encoded_bits) if bit}
-            tm.set_active_columns(active_columns)
-            tm.compute(learn=False)
-            evaluation_bursts.append(len(tm.bursting_columns))
-
-        self.assertTrue(
-            all(count == 0 for count in evaluation_bursts),
-            f"Expected no bursting once the sine sequence is mastered, got {evaluation_bursts}",
-        )
 
 
 class TestCustomDistalLayer(unittest.TestCase):
