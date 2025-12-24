@@ -102,7 +102,6 @@ class TestBasicBuildingBlocks(unittest.TestCase):
         self.assertEqual(len(column.cells), 4)
         self.assertEqual(len(column.potential_synapses), 5)
         self.assertFalse(column.active)
-        self.assertEqual(column.boost, 1.0)
     
     def test_column_compute_overlap(self):
         """Test Column's overlap computation."""
@@ -149,6 +148,21 @@ class TestInputCombination(unittest.TestCase):
         self.assertEqual(sp.field_order, ["vision", "touch"])
         self.assertEqual(len(sp.column_field_map), len(sp.columns))
 
+    def test_spatial_pooler_accepts_field_list_dict(self):
+        sp = SpatialPoolerLayer(input_size=7, num_columns=9, sparsity=0.2)
+        field_dict = {
+            "vision": [1, 0, 1],
+            "touch": [0, 1, 1, 0],
+        }
+        expected = [1, 0, 1, 0, 1, 1, 0]
+
+        sp.set_input(field_dict)
+
+        np.testing.assert_array_equal(sp.input_vector, expected)
+        self.assertEqual(sp.field_ranges, {"vision": (0, 3), "touch": (3, 7)})
+        self.assertEqual(sp.field_order, ["vision", "touch"])
+        self.assertEqual(len(sp.column_field_map), len(sp.columns))
+
     def test_temporal_memory_accepts_field_dict(self):
         tm = TemporalMemoryLayer(num_columns=6, cells_per_column=2)
         field_dict = {
@@ -156,7 +170,7 @@ class TestInputCombination(unittest.TestCase):
             "vision": np.array([0, 1, 1]),
         }
 
-        tm.set_active_columns(field_dict)
+        tm.set_active_columns(tm.encode_active_columns(field_dict))
 
         self.assertEqual(tm.active_columns, {0, 4, 5})
         self.assertEqual(tm.field_ranges, {"motor": (0, 3), "vision": (3, 6)})
@@ -167,7 +181,7 @@ class TestInputCombination(unittest.TestCase):
         tm = TemporalMemoryLayer(num_columns=6, cells_per_column=2)
         nested = [np.array([1, 0]), np.array([0, 1]), np.array([1, 0])]
 
-        tm.set_active_columns(nested)
+        tm.set_active_columns(tm.encode_active_columns(nested))
 
         self.assertEqual(tm.active_columns, {0, 3, 4})
 
@@ -183,10 +197,12 @@ class TestInputCombination(unittest.TestCase):
 
     def test_temporal_memory_predicted_columns_split_by_field(self):
         tm = TemporalMemoryLayer(num_columns=6, cells_per_column=2)
-        tm.set_active_columns({
-            "motor": np.array([1, 0, 0]),
-            "vision": np.array([0, 1, 1])
-        })
+        tm.set_active_columns(
+            tm.encode_active_columns({
+                "motor": np.array([1, 0, 0]),
+                "vision": np.array([0, 1, 1])
+            })
+        )
 
         tm.predictive_cells = {
             tm.columns[0].cells[0],

@@ -29,6 +29,7 @@ InputComposite = Union[
     Sequence[InputField],
     Dict[str, InputField],
 ]
+ActiveColumnInput = Union[Set[int], Sequence[int], np.ndarray]
 
 
 # ===== Basic Building Blocks =====
@@ -48,19 +49,22 @@ class Cell:
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
 
-    def find_best_segment(self, active_cells: Set['Cell'], return_match=False) -> Union[Optional['Segment'], Tuple[Optional['Segment'], int]]:
-        """Find segment on cell with most synapses to active cells."""
+    def find_best_segment(self, active_cells: Set['Cell']) -> Tuple[Optional['Segment'], int]:
+        """Return segment with most synapses to the given active cells.
+
+        The tuple structure avoids call-site conditionals and always exposes both
+        the winning segment (if any) and its match count.
+        """
         best_segment = None
         max_synapses_to_active_cells = -1
         
-        # Find segment with most synapses to active cells
         for segment in self.segments:
             synapses_to_active_cells = segment.get_synapses_to_active_cells(active_cells)
             if len(synapses_to_active_cells) > max_synapses_to_active_cells:
                 max_synapses_to_active_cells = len(synapses_to_active_cells)
                 best_segment = segment
 
-        return (best_segment, max_synapses_to_active_cells) if return_match else best_segment
+        return best_segment, max_synapses_to_active_cells
 
 class Synapse:
     
@@ -134,15 +138,11 @@ class Column:
     """Column containing cells and proximal synapses for spatial pooling."""
     
     def __init__(self, 
-                 potential_synapses: List[ProximalSynapse], 
-                 position: Tuple[int, int] = (0, 0),
+                 potential_synapses: List[ProximalSynapse],
+                 position: Optional[Tuple[int, int]] = None,
                  cells_per_column: int = 1) -> None:
-        self.position: Tuple[int, int] = position
         self.potential_synapses: List[ProximalSynapse] = potential_synapses
-        self.boost: float = 1.0
-        self.active_duty_cycle: float = 0.0
-        self.overlap_duty_cycle: float = 0.0
-        self.min_duty_cycle: float = 0.01
+        self.position: Optional[Tuple[int, int]] = position
         self.connected_synapses: List[ProximalSynapse] = []
         self.overlap: float = 0.0
         self.active: bool = False
@@ -155,10 +155,10 @@ class Column:
                                    if s.permanence >= connected_perm]
     
     def compute_overlap(self, input_vector: np.ndarray, min_overlap: int = MIN_OVERLAP) -> None:
-        """Compute overlap with current binary input vector and apply boost."""
+        """Compute overlap with current binary input vector."""
         overlap = sum(1 for s in self.connected_synapses 
                      if s.source_input < len(input_vector) and input_vector[s.source_input])
-        self.overlap = float(overlap * self.boost) if overlap >= min_overlap else 0.0
+        self.overlap = float(overlap) if overlap >= min_overlap else 0.0
     
     def add_cell(self) -> Cell:
         """Add a new cell to this column."""
@@ -181,14 +181,11 @@ class Layer(ABC):
         self.learning_rate: float = learning_rate  # Scales permanence changes
         self.input_layers: List['Layer'] = []
         self.active_cells: Set[Cell] = set()
-        self.field_ranges: Dict[str, Tuple[int, int]] = {}
-        self.field_order: List[str] = []
-        self.column_field_map: Dict['Column', Optional[str]] = {}
         
     @abstractmethod
     def compute(
         self,
-        input: Optional[Union[Set[int], Sequence[int], np.ndarray, InputComposite]] = None,
+        input: Optional[ActiveColumnInput] = None,
         learn: bool = True,
     ) -> None:
         """Compute layer activations given new input or previously set state."""
@@ -223,51 +220,72 @@ class Layer(ABC):
         for cell in self.active_cells:
             cell.active = True
 
+
+class ColumnarLayer(Layer):
+    """Layer variant that manages spatial columns and field metadata."""
+
+    def __init__(self, name: str = "Layer", learning_rate: float = 1.0) -> None:
+        super().__init__(name, learning_rate)
+        self.columns: List[Column] = []
+        self.field_ranges: Dict[str, Tuple[int, int]] = {}
+        self.field_order: List[str] = []
+        self.column_field_map: Dict[Column, Optional[str]] = {}
+
     def combine_input_fields(self, input_vector: InputComposite, expected_size: Optional[int] = None) -> np.ndarray:
         """Combine multi-field inputs into a single binary vector like HTM TemporalPooler."""
-        if isinstance(input_vector, dict):
-            start = 0
-            arrays: List[np.ndarray] = []
-            self.field_ranges = {}
-            self.field_order = []
-            for name, arr in input_vector.items():
-                arr_np = np.asarray(arr, dtype=int).ravel()
-                end = start + arr_np.shape[0]
-                self.field_ranges[name] = (start, end)
-                self.field_order.append(name)
-                arrays.append(arr_np)
-                start = end
-            combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
-            self.column_field_map = {}
-        elif isinstance(input_vector, (list, tuple)):
-            arrays = [np.asarray(v, dtype=int).ravel() for v in input_vector]
-            combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
-        else:
-            combined = np.asarray(input_vector, dtype=int).ravel()
+        combined, metadata = self._combine_input_fields(input_vector)
 
         if expected_size is not None and combined.shape[0] != expected_size:
             raise ValueError(
                 f"Combined input length {combined.shape[0]} != expected size {expected_size}."
             )
 
-        if self.field_ranges and any(len(rng) != 2 for rng in self.field_ranges.values()):
+        if metadata is not None:
+            self.field_ranges, self.field_order = metadata
+            self.column_field_map = {}
+            self._assign_column_fields()
+        else:
             self.field_ranges = {}
             self.field_order = []
             self.column_field_map = {}
 
-        if self.field_ranges and not self.column_field_map:
-            self._assign_column_fields()
         return combined
+
+    def _combine_input_fields(
+        self,
+        input_vector: InputComposite,
+    ) -> Tuple[np.ndarray, Optional[Tuple[Dict[str, Tuple[int, int]], List[str]]]]:
+        """Pure helper that concatenates fields and reports metadata when present."""
+        if isinstance(input_vector, dict):
+            start = 0
+            arrays: List[np.ndarray] = []
+            field_ranges: Dict[str, Tuple[int, int]] = {}
+            field_order: List[str] = []
+            for name, arr in input_vector.items():
+                arr_np = np.asarray(arr, dtype=int).ravel()
+                end = start + arr_np.shape[0]
+                field_ranges[name] = (start, end)
+                field_order.append(name)
+                arrays.append(arr_np)
+                start = end
+            combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
+            metadata = (field_ranges, field_order)
+        elif isinstance(input_vector, (list, tuple)):
+            arrays = [np.asarray(v, dtype=int).ravel() for v in input_vector]
+            combined = np.concatenate(arrays) if arrays else np.array([], dtype=int)
+            metadata = None
+        else:
+            combined = np.asarray(input_vector, dtype=int).ravel()
+            metadata = None
+
+        return combined, metadata
 
     def _assign_column_fields(self) -> None:
         """Assign dominant field per column based on connected synapse sources."""
-        if not self.field_ranges or not hasattr(self, 'columns'):
-            return
-        columns = getattr(self, 'columns')
-        if not columns:
+        if not self.field_ranges or not self.columns:
             return
         inv_order = {name: idx for idx, name in enumerate(self.field_order)}
-        for column in columns:
+        for column in self.columns:
             counts: Dict[str, int] = {}
             for syn in getattr(column, 'connected_synapses', []):
                 idx = getattr(syn, 'source_input', None)
@@ -301,11 +319,12 @@ class Layer(ABC):
         if not column_indices:
             return {}
 
-        columns = getattr(self, 'columns', None)
-        indexed_columns: Dict[int, Column] = {}
-        if columns is not None:
-            indexed_columns = {idx: col for idx, col in enumerate(columns)}
+        if not self.columns:
+            raise RuntimeError(
+                f"{self.__class__.__name__} cannot group columns without initialized columns."
+            )
 
+        indexed_columns = {idx: col for idx, col in enumerate(self.columns)}
         self._ensure_field_assignments()
 
         buckets: Dict[str, Set[int]] = {}
@@ -328,12 +347,10 @@ class Layer(ABC):
             buckets["__all__"] = set(column_indices)
 
         return {key: value for key, value in buckets.items() if value}
-    
-
 
 # ===== Temporal Memory Layer =====
 
-class TemporalMemoryLayer(Layer):
+class TemporalMemoryLayer(ColumnarLayer):
     """Temporal Memory layer implementation following HTM principles.
     
     Learns temporal sequences through distal dendrites on cells.
@@ -371,12 +388,12 @@ class TemporalMemoryLayer(Layer):
         
     def compute(
         self,
-        input: Optional[Union[Set[int], Sequence[int], np.ndarray, InputComposite]] = None,
+        input: InputComposite = None,
         learn: bool = True,
     ) -> None:
         """Compute temporal memory activations."""
         if input is not None:
-            self.set_active_columns(input)
+            self.set_active_columns(self.encode_active_columns(input))
 
         # Phase 1: Activate cells
         self._activate_cells(learn)
@@ -384,65 +401,54 @@ class TemporalMemoryLayer(Layer):
         # Phase 2: Activate dendrites for next timestep
         self._activate_dendrites()
         
-    def set_active_columns(self, active_columns: Union[Set[int], Sequence[int], np.ndarray, InputComposite]) -> None:
+    def encode_active_columns(self, data: InputComposite) -> Set[int]:
+        """Convert composite/binary inputs into the canonical active column set."""
+        vector = self.combine_input_fields(data, expected_size=self.num_columns)
+        return set(map(int, np.flatnonzero(vector)))
+
+    def _validate_column_index(self, idx: Any) -> int:
+        value = int(idx)
+        if value < 0 or value >= self.num_columns:
+            raise ValueError(f"Column index {value} out of bounds for {self.num_columns} columns.")
+        return value
+
+    def set_active_columns(self, active_columns: ActiveColumnInput) -> None:
         """Set which columns are active (typically from spatial pooler).
-        self.active_columns is like [3, 7, 13, ...]
+        Accepts either a set of indices, an explicit index sequence, or a binary mask.
         """
         if isinstance(active_columns, set):
-            self.active_columns = active_columns.copy()
+            self.active_columns = {self._validate_column_index(idx) for idx in active_columns}
             return
 
-        combined_vector: Optional[np.ndarray] = None
-        if isinstance(active_columns, dict):
-            combined_vector = self.combine_input_fields(active_columns, expected_size=self.num_columns)
-        elif isinstance(active_columns, (list, tuple)) and active_columns:
-            first = active_columns[0]
-            if isinstance(first, (np.ndarray, Sequence)) and not isinstance(first, (str, bytes, int, np.integer, bool)):
-                combined_vector = self.combine_input_fields(active_columns, expected_size=self.num_columns)
-
-        if combined_vector is not None:
-            self.active_columns = set(map(int, np.flatnonzero(combined_vector)))
-            return
-        
         if isinstance(active_columns, np.ndarray):
             vector = np.asarray(active_columns).ravel()
-            treat_as_binary = (
-                vector.size == self.num_columns and
-                (vector.dtype == np.bool_ or np.all((vector == 0) | (vector == 1)))
-            )
-            if treat_as_binary:
+            if vector.size == self.num_columns and np.all(np.logical_or(vector == 0, vector == 1)):
                 self.active_columns = set(map(int, np.flatnonzero(vector)))
-            else:
-                self.active_columns = set(map(int, vector.tolist()))
+                return
+            self.active_columns = {self._validate_column_index(val) for val in vector.tolist()}
             return
-        
+
         if isinstance(active_columns, Sequence):
             if isinstance(active_columns, (str, bytes)):
                 raise TypeError("Active column sequence must not be a string/bytes.")
-            
+
             seq_len = len(active_columns)
-            if seq_len == self.num_columns:
-                active_set: Set[int] = set()
-                is_binary = True
-                for idx, value in enumerate(active_columns):
-                    if value not in (0, 1, False, True):
-                        is_binary = False
-                        break
-                    if value:
-                        active_set.add(idx)
-                if is_binary:
-                    self.active_columns = active_set
-                    return
-            
-            self.active_columns = set(map(int, active_columns))
+            if seq_len == self.num_columns and all(value in (0, 1, False, True) for value in active_columns):
+                indices: Set[int] = {self._validate_column_index(idx) for idx, value in enumerate(active_columns) if value}
+                self.active_columns = indices
+                return
+
+            self.active_columns = {self._validate_column_index(value) for value in active_columns}
             return
-        
-        raise TypeError("Unsupported type for active_column_indices")
+
+        raise TypeError("Unsupported type for active_columns; provide indices or a binary mask.")
         
     def _activate_cells(self, learn: bool) -> None:
         """Activate cells based on active columns and predictions."""
         new_active_cells: Set[Cell] = set()
         new_bursting_columns: Set[int] = set()
+        predicted_learning_segments: List[Segment] = []
+        bursting_winners: List[Cell] = []
         
         for col_idx in self.active_columns:
             if col_idx >= len(self.columns):
@@ -459,29 +465,34 @@ class TemporalMemoryLayer(Layer):
                     new_active_cells.add(cell)
                     
                     if learn:
-                        # Learn on active segments
                         for segment in cell.segments:
                             if segment.meets_activation_threshold(self.prev_active_cells):
-                                # increase permanence to prev active cells and decrease others
-                                self._strengthen_segment(segment, self.prev_active_cells)
+                                predicted_learning_segments.append(segment)
             else:
                 # Burst column - activate all cells
                 new_bursting_columns.add(col_idx)
                 for cell in column.cells:
                     new_active_cells.add(cell)
                 
-                # Choose a winner cell based on segment with highest active cell count or fewest segments
-                winner_cell = self._get_best_matching_cell(column, self.prev_active_cells)
-                
-                # TODO: Possibly the learn in previous if-block and here can be combined to
-                # simplify code 
-                # TODO: More bursting more the learning_rate
                 if learn:
-                    # Learn on winner cell
-                    self._learn_on_cell(winner_cell, self.prev_active_cells)
+                    winner_cell = self._get_best_matching_cell(column, self.prev_active_cells)
+                    bursting_winners.append(winner_cell)
         
         # Update state
         self.bursting_columns = new_bursting_columns
+
+        
+        # TODO: Possibly the learn in previous if-block and here can be combined to
+        # simplify code 
+        # TODO: More bursting more the learning_rate
+        if learn:
+            for cell in new_active_cells:
+                for segment in cell.segments:
+                    if segment.meets_activation_threshold(self.prev_active_cells):
+                        self._strengthen_segment(segment, self.prev_active_cells)
+            for winner in bursting_winners:
+                self._learn_on_cell(winner, self.prev_active_cells)
+
         self.prev_active_cells = self.active_cells.copy()
         self.set_active_cells(new_active_cells)
         
@@ -523,7 +534,7 @@ class TemporalMemoryLayer(Layer):
         
         # Find a cell with segment that has most synapses to cell activations
         for cell in column.cells:
-            _, max_synapses_to_active_cells  = cell.find_best_segment(cell_activations, return_match=True)
+            _, max_synapses_to_active_cells  = cell.find_best_segment(cell_activations)
             if max_synapses_to_active_cells > highest_synapse_count:
                 highest_synapse_count = max_synapses_to_active_cells
                 best_cell = cell
@@ -538,7 +549,7 @@ class TemporalMemoryLayer(Layer):
     def _learn_on_cell(self, cell: Cell, prev_active_cells: Set[Cell]) -> None:
         """Create or adapt segment on cell to learn pattern."""
         # Find segment with most synapses to the cell activations
-        best_segment, synapses_to_active_cells = cell.find_best_segment(prev_active_cells, return_match=True)
+        best_segment, synapses_to_active_cells = cell.find_best_segment(prev_active_cells)
         
         if best_segment is None or synapses_to_active_cells < self.learning_threshold:
             # Create new segment
@@ -611,7 +622,7 @@ class TemporalMemoryLayer(Layer):
 
 # ===== Spatial Pooler Layer =====
 
-class SpatialPoolerLayer(Layer):
+class SpatialPoolerLayer(ColumnarLayer):
     """Spatial Pooler layer implementation following HTM principles.
     
     Learns sparse distributed representations of input patterns.
@@ -626,8 +637,7 @@ class SpatialPoolerLayer(Layer):
                  learning_rate: float = 1.0,
                  connected_perm: float = CONNECTED_PERM,
                  initial_permanence: float = INITIAL_PERMANENCE,
-                 min_overlap: int = MIN_OVERLAP,
-                 boost_strength: float = 0.0) -> None:
+                 min_overlap: int = MIN_OVERLAP) -> None:
         super().__init__(name, learning_rate)
         self.input_size = input_size
         self.num_columns = num_columns
@@ -636,15 +646,10 @@ class SpatialPoolerLayer(Layer):
         self.connected_perm = connected_perm
         self.initial_permanence = initial_permanence
         self.min_overlap = min_overlap
-        self.boost_strength = boost_strength
         
         # Create columns with proximal synapses
         self.columns: List[Column] = []
-        grid_size = int(np.sqrt(num_columns))
-        for i in range(num_columns):
-            x = i % grid_size
-            y = i // grid_size
-            position = (x, y)
+        for col_idx in range(num_columns):
             
             # Create potential synapses
             num_potential = int(input_size * potential_pct)
@@ -654,7 +659,7 @@ class SpatialPoolerLayer(Layer):
                 for idx in potential_inputs
             ]
             
-            col = Column(potential_synapses, position=position, cells_per_column=1)
+            col = Column(potential_synapses, cells_per_column=1)
             self.columns.append(col)
         
         self.input_vector: Optional[np.ndarray] = None
@@ -741,12 +746,6 @@ class SpatialPoolerLayer(Layer):
     
     def add_column(self) -> Column:
         """Add a new column to the layer."""
-        col_idx = len(self.columns)
-        grid_size = int(np.sqrt(self.num_columns + 1))
-        x = col_idx % grid_size
-        y = col_idx // grid_size
-        position = (x, y)
-        
         # Create potential synapses for new column
         num_potential = int(self.input_size * self.potential_pct)
         potential_inputs = np.random.choice(self.input_size, size=num_potential, replace=False)
@@ -755,7 +754,7 @@ class SpatialPoolerLayer(Layer):
             for idx in potential_inputs
         ]
         
-        new_column = Column(potential_synapses, position=position, cells_per_column=1)
+        new_column = Column(potential_synapses, cells_per_column=1)
         self.columns.append(new_column)
         self.num_columns += 1
         return new_column
@@ -867,7 +866,7 @@ class CustomDistalLayer(Layer):
 
 # ===== Sparsey-Inspired Spatial Pooler =====
 
-class SparseyInspiredSpatialPooler(Layer):
+class SparseyInspiredSpatialPooler(ColumnarLayer):
     """Sparsey-inspired spatial pooler with neighborhood constraints.
     
     Groups of columns define neighborhoods, and only a fixed percentage
@@ -917,6 +916,7 @@ class SparseyInspiredSpatialPooler(Layer):
                 neighborhood.append(col)
             
             self.neighborhoods.append(neighborhood)
+        self.columns = [column for neighborhood in self.neighborhoods for column in neighborhood]
         
         self.input_vector: Optional[np.ndarray] = None
         
@@ -1026,5 +1026,6 @@ class SparseyInspiredSpatialPooler(Layer):
             new_neighborhood.append(col)
         
         self.neighborhoods.append(new_neighborhood)
+        self.columns.extend(new_neighborhood)
         self.num_neighborhoods += 1
         return new_neighborhood
