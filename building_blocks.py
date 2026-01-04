@@ -76,11 +76,19 @@ class Cell(Active, Predictive):
     Holds a (possibly empty) list of distal segments used for temporal learning.
     """
     
-    def __init__(self, parent_column: 'Column' = None, distal_field: 'Field'=None) -> None:
+    def __init__(
+        self,
+        parent_column: 'Column' = None,
+        distal_field: 'Field' = None,
+        learning_threshold: int = LEARNING_THRESHOLD,
+        activation_threshold: int = ACTIVATION_THRESHOLD,
+    ) -> None:
         super().__init__()
         self.parent_column = parent_column
         self.distal_field = distal_field
         self.segments: List['Segment'] = []
+        self.learning_threshold = learning_threshold
+        self.activation_threshold = activation_threshold
         
     def initialize(self, distal_field: 'Field') -> None:
         self.distal_field = distal_field
@@ -96,16 +104,13 @@ class Cell(Active, Predictive):
         """
         best_segment = None
         max_synapses_to_active_cells = -1
-        prev_active_cells = self.distal_field.prev_active_cells-{self}
         
         for segment in self.segments:
-            synapses_to_active_cells = segment.get_synapses_to_active_cells(prev_active_cells)
+            # Code can improved to push the learning threshold down to segment level
+            synapses_to_active_cells = segment.get_synapses_to_prev_active_cells()
             if len(synapses_to_active_cells) > max_synapses_to_active_cells:
                 max_synapses_to_active_cells = len(synapses_to_active_cells)
                 best_segment = segment
-
-        if best_segment is None:
-            self.segments.append(best_segment:=Segment(parent_cell=self))
 
         return best_segment
 
@@ -140,15 +145,13 @@ class Segment(Active, Learning):
         self,
         parent_cell: Cell = None,
         synapses: Optional[List[DistalSynapse]] = None,
-        activation_threshold: Optional[int] = None,
+        activation_threshold: int = ACTIVATION_THRESHOLD,
     ) -> None:
         super().__init__()
         self.parent_cell: Cell = parent_cell
         self.synapses: List[DistalSynapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
-        self.activation_threshold: int = (
-            activation_threshold if activation_threshold is not None else ACTIVATION_THRESHOLD
-        )
+        self.activation_threshold: int = activation_threshold 
         self.max_synapses = RECEPTIVE_FIELD_PCT*len(self.parent_cell.distal_field.cells)
     
     def activate_segment(self) -> List[DistalSynapse]:
@@ -159,9 +162,9 @@ class Segment(Active, Learning):
             self.set_active()
             self.parent_cell.set_predictive()
     
-    def get_synapses_to_active_cells(self, active_cells: Set[Cell]) -> List[DistalSynapse]:
+    def get_synapses_to_prev_active_cells(self) -> List[DistalSynapse]:
         """Return synapses whose source cell is active (ignores permanence threshold)."""
-        return [syn for syn in self.synapses if syn.source_cell in active_cells]
+        return [syn for syn in self.synapses if syn.source_cell in self.parent_cell.distal_field.prev_active_cells]
     
     def meets_activation_threshold(
         self,
@@ -219,7 +222,7 @@ class ProximalSynapse(Synapse):
 class Field:
   """A collection of cells."""
   def __init__(self, cells: Iterable[Cell]) -> None:
-      self.cells: Set[Cell] = set(cells)
+      self.cells: List[Cell] = list(cells)
 
   def __iter__(self):
       return iter(self.cells)
@@ -249,10 +252,16 @@ class Field:
 class Column(Active, Bursting):
     """Column containing cells and proximal synapses for spatial pooling."""
     
-    def __init__(self, 
-                 input_field: Field=None,
-                 cells_per_column: int = 1) -> None:
+    def __init__(
+        self,
+        input_field: Field = None,
+        cells_per_column: int = 1,
+        learning_threshold: int = LEARNING_THRESHOLD,
+        activation_threshold: int = ACTIVATION_THRESHOLD,
+    ) -> None:
         super().__init__()
+        self.learning_threshold = learning_threshold
+        self.activation_threshold = activation_threshold
         self.input_field: Field = input_field
         if input_field is not None:
             self.receptive_field: Set[Cell] = self.input_field.sample(RECEPTIVE_FIELD_PCT)
@@ -260,7 +269,14 @@ class Column(Active, Bursting):
             self.connected_synapses: List[ProximalSynapse] = []
             self._update_connected_synapses()
             self.overlap: float = 0.0
-        self.cells: List[Cell] = [Cell(parent_column=self) for _ in range(cells_per_column)]
+        self.cells: List[Cell] = [
+            Cell(
+                parent_column=self,
+                learning_threshold=self.learning_threshold,
+                activation_threshold=self.activation_threshold,
+            )
+            for _ in range(cells_per_column)
+        ]
         
     def _update_connected_synapses(self, connected_perm: float = CONNECTED_PERM) -> None:
         """Update the list of connected synapses based on permanence threshold."""
@@ -292,9 +308,9 @@ class Column(Active, Bursting):
         
         # Find a cell with segment that has most synapses to cell activations
         for cell in self.cells:
-            _, max_synapses_to_active_cells  = cell.find_best_segment()
-            if max_synapses_to_active_cells > highest_synapse_count:
-                highest_synapse_count = max_synapses_to_active_cells
+            best_segment = cell.find_best_segment()
+            if best_segment is not None and (synapse_count:= len(best_segment.get_synapses_to_prev_active_cells())) > highest_synapse_count:
+                highest_synapse_count = synapse_count
                 best_cell = cell
         
         if best_cell is None:
@@ -302,12 +318,6 @@ class Column(Active, Bursting):
             best_cell = min(self.cells, key=lambda c: len(c.segments))
         
         return best_cell
-    
-    def add_cell(self) -> Cell:
-        """Add a new cell to this column."""
-        new_cell = Cell()
-        self.cells.append(new_cell)
-        return new_cell
 
     def clear_states(self) -> None:
         self.update_prev_active()
@@ -317,24 +327,50 @@ class Column(Active, Bursting):
 
 
 class ColumnField(Field):
-    def __init__(self, input_fields: List[Field], num_columns: int=0, cells_per_column: int=1, non_spatial: bool=False, non_temporal: bool=False) -> None:
+    def __init__(
+        self,
+        input_fields: List[Field],
+        num_columns: int = 0,
+        cells_per_column: int = 1,
+        non_spatial: bool = False,
+        non_temporal: bool = False,
+        activation_threshold: int = ACTIVATION_THRESHOLD,
+        learning_threshold: int = LEARNING_THRESHOLD,
+    ) -> None:
         self.non_spatial = non_spatial
         self.non_temporal = non_temporal
+        self.activation_threshold = activation_threshold
+        self.learning_threshold = learning_threshold
         self.input_field = Field(chain.from_iterable(input_fields))
         if self.non_temporal:
             cells_per_column = 1
         if self.non_spatial:
             num_columns = len(self.input_field.cells)
-            self.columns: List[Column] = [Column(cells_per_column=cells_per_column) for _ in range(num_columns)]
+            self.columns: List[Column] = [
+                Column(
+                    cells_per_column=cells_per_column,
+                    learning_threshold=self.learning_threshold,
+                    activation_threshold=self.activation_threshold,
+                )
+                for _ in range(num_columns)
+            ]
         else:
-            self.columns: List[Column] = [Column(self.input_field, cells_per_column=cells_per_column) for _ in range(num_columns)]
-        self.active_columns = []
+            self.columns = [
+                Column(
+                    self.input_field,
+                    cells_per_column=cells_per_column,
+                    learning_threshold=self.learning_threshold,
+                    activation_threshold=self.activation_threshold,
+                )
+                for _ in range(num_columns)
+            ]
         super().__init__(chain.from_iterable(column.cells for column in self.columns))
         for column in self.columns:
             for cell in column.cells:
-              cell.initialize(distal_field=Field(self.cells-{cell}))
+              cell.initialize(distal_field=Field(set(self.cells)-{cell}))
+        self.active_columns :Column = []
       
-    def compute(self) -> None:
+    def compute(self, learn=True) -> None:
         self.clear_states()
         
         if self.non_spatial:
@@ -348,7 +384,8 @@ class ColumnField(Field):
         
             self.activate_columns()
 
-            self.learn_columns()
+            if learn:
+                self.learn_columns()
 
         if self.non_temporal:
             for column in self.active_columns:
@@ -357,7 +394,8 @@ class ColumnField(Field):
         else:
             self.activate_cells()
 
-            self.learn_cells()
+            if learn:
+                self.learn_cells()
 
             self.depolarize_cells()
     
@@ -394,18 +432,34 @@ class ColumnField(Field):
                 segment.learn()
         for column in self.active_columns:
             if column.bursting:
-                for cell in column.cells:
-                   cell.find_best_segment().learn()
+                # Implementation choice: only best matching cell learns,
+                #  or all cells learn
+                best_cell = column.get_best_matching_cell()
+                best_segment = best_cell.find_best_segment()
+                if best_segment is None or len(best_segment.get_synapses_to_prev_active_cells()) < self.learning_threshold:
+                    best_segment = Segment(
+                        parent_cell=best_cell,
+                        activation_threshold=self.activation_threshold,
+                    )
+                    best_cell.segments.append(best_segment)
+                best_segment.learn() 
+                # for cell in column.cells:
+                #    cell.find_best_segment().learn()
     
     def depolarize_cells(self) -> None:
         for cell in self.cells:
           cell.update_prev_predictive()
           for segment in cell.segments:
               segment.activate_segment()
+    
+    @property
+    def bursting_columns(self) -> List[Column]:
+        """Return list of currently bursting columns."""
+        return [column for column in self.columns if column.bursting]
                 
     def clear_states(self) -> None:
         """Clear active and bursting states for all columns and cells."""
-        self.active_columns = []
+        self.active_columns :List[Column] = []
         for column in self.columns:
             column.clear_states()
 
