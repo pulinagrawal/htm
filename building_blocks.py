@@ -317,17 +317,17 @@ class Column(Active, Bursting):
 
 
 class ColumnField(Field):
-    def __init__(self, input_fields: List[Field], n_columns: int=0, n_cells_per_column: int=1, non_spatial: bool=False, non_temporal: bool=False) -> None:
+    def __init__(self, input_fields: List[Field], num_columns: int=0, cells_per_column: int=1, non_spatial: bool=False, non_temporal: bool=False) -> None:
         self.non_spatial = non_spatial
         self.non_temporal = non_temporal
         self.input_field = Field(chain.from_iterable(input_fields))
         if self.non_temporal:
-            n_cells_per_column = 1
+            cells_per_column = 1
         if self.non_spatial:
-            n_columns = len(self.input_field.cells)
-            self.columns: List[Column] = [Column(cells_per_column=n_cells_per_column) for _ in range(n_columns)]
+            num_columns = len(self.input_field.cells)
+            self.columns: List[Column] = [Column(cells_per_column=cells_per_column) for _ in range(num_columns)]
         else:
-            self.columns: List[Column] = [Column(self.input_field, cells_per_column=n_cells_per_column) for _ in range(n_columns)]
+            self.columns: List[Column] = [Column(self.input_field, cells_per_column=cells_per_column) for _ in range(num_columns)]
         self.active_columns = []
         super().__init__(chain.from_iterable(column.cells for column in self.columns))
         for column in self.columns:
@@ -434,4 +434,4 @@ class InputField(Field, RandomDistributedScalarEncoder):
 
 input_field = Field(cells={Cell() for _ in range(10)})
 
-ColumnField(input_fields=[input_field], n_columns=1)  # Dummy instance to avoid linter errors
+ColumnField(input_fields=[input_field], num_columns=1)  # Dummy instance to avoid linter errors

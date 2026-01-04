@@ -27,8 +27,8 @@ class TestRealData(unittest.TestCase):
         column_field = ColumnField(
             input_fields=[input_field],
             non_spatial=True,
-            n_columns=num_columns,
-            n_cells_per_column=cells_per_column,
+            num_columns=num_columns,
+            cells_per_column=cells_per_column,
         )
 
         cycle_length = 64
