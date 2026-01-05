@@ -72,8 +72,8 @@ class Cell(Active, Predictive):
     
     def __init__(
         self,
-        parent_column: 'Column' = None,
-        distal_field: 'Field' = None,
+        parent_column: 'Column|None' = None,
+        distal_field: 'Field|None' = None,
     ) -> None:
         super().__init__()
         self.parent_column = parent_column
@@ -86,7 +86,7 @@ class Cell(Active, Predictive):
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
 
-    def find_best_predictive_segment(self) -> 'Segment':
+    def find_best_predictive_segment(self) -> 'Segment|None':
         """Return segment with most synapses to the given active cells.
 
         The tuple structure avoids call-site conditionals and always exposes both
@@ -101,7 +101,6 @@ class Cell(Active, Predictive):
             if len(synapses_to_active_cells) > max_synapses_to_active_cells:
                 max_synapses_to_active_cells = len(synapses_to_active_cells)
                 best_segment = segment
-
 
         return best_segment
 
@@ -145,7 +144,7 @@ class Segment(Active, Learning):
     
     def __init__(
         self,
-        parent_cell: Cell = None,
+        parent_cell: Cell,
         synapses: Optional[List[DistalSynapse]] = None,
     ) -> None:
         super().__init__()
@@ -156,7 +155,7 @@ class Segment(Active, Learning):
         self.activation_threshold: int = int(.002*self.max_synapses)
         self.learning_threshold_connected_pct: float = .1
     
-    def activate_segment(self) -> List[DistalSynapse]:
+    def activate_segment(self):
         """Return connected synapses whose source cell is active."""
         connected_synapses = [syn for syn in self.synapses 
                               if syn.source_cell.active and syn.permanence >= CONNECTED_PERM]
@@ -166,7 +165,7 @@ class Segment(Active, Learning):
     
     def meets_learning_threshold(self) -> bool:
         """Return True if segment meets learning threshold."""
-        return len(self.get_synapses_to_prev_active_cells()) > self.learning_threshold_connected_pct*len(self.synapses):
+        return len(self.get_synapses_to_prev_active_cells()) > self.learning_threshold_connected_pct*len(self.synapses)
     
     def get_synapses_to_prev_active_cells(self) -> List[DistalSynapse]:
         """Return synapses whose source cell is active (ignores permanence threshold)."""
@@ -245,11 +244,11 @@ class Column(Active, Bursting):
     
     def __init__(
         self,
-        input_field: Field = None,
+        input_field: Field|None = None,
         cells_per_column: int = 1,
     ) -> None:
         super().__init__()
-        self.input_field: Field = input_field
+        self.input_field: Field|None = input_field
         if input_field is not None:
             self.receptive_field: Set[Cell] = self.input_field.sample(RECEPTIVE_FIELD_PCT)
             self.potential_synapses: List[ProximalSynapse] = [ProximalSynapse(source_cell=cell) for cell in self.receptive_field]
@@ -345,7 +344,7 @@ class ColumnField(Field):
         for column in self.columns:
             for cell in column.cells:
               cell.initialize(distal_field=Field(set(self.cells)-{cell}))
-        self.active_columns :Column = []
+        self.active_columns: List[Column] = []
       
     def compute(self, learn=True) -> None:
         self.clear_states()
@@ -495,7 +494,7 @@ class ColumnField(Field):
     def clear_states(self) -> None:
         """Clear active and bursting states for all columns and cells."""
         super().clear_states()
-        self.active_columns :List[Column] = []
+        self.active_columns.clear()
         for column in self.columns:
             column.clear_states()
 
@@ -509,7 +508,7 @@ class InputField(Field, RandomDistributedScalarEncoder):
         rdse_params.category = category
         RandomDistributedScalarEncoder.__init__(self, rdse_params)
 
-    def encode(self, input_value: float) -> List[bool]:
+    def encode(self, input_value: float) -> List[int]:
         """Encode the input value into a binary vector."""
         self.clear_states()
         encoded_bits = super().encode(input_value)
