@@ -119,7 +119,6 @@ class Cell(Active, Predictive):
             segment.clear_states()
 
 
-
 class Synapse:
     
     def __init__(self, source_cell: Cell|None, permanence: float) -> None:
@@ -169,16 +168,12 @@ class Segment(Active, Learning):
     
     def get_synapses_to_prev_active_cells(self) -> List[DistalSynapse]:
         """Return synapses whose source cell is active (ignores permanence threshold)."""
-        return [syn for syn in self.synapses if syn.source_cell in self.parent_cell.distal_field.prev_active_cells]
+        return [syn for syn in self.synapses if syn.source_cell is not None and syn.source_cell.prev_active]
     
     def adapt(self, strength) -> None:
         # Strengthen synapses to active cells
-        prev_active_cells = self.parent_cell.distal_field.prev_active_cells-{self.parent_cell}
         for syn in self.synapses:
-            if syn.source_cell in prev_active_cells:
-                syn._adjust_permanence(increase=True, strength=strength)
-            else:
-                syn._adjust_permanence(increase=False, strength=strength)
+            syn._adjust_permanence(increase=syn.source_cell.prev_active, strength=strength)
     
     def grow_synapses(self, strength) -> None:
         """Grow new synapses to random cells in the distal field."""
@@ -210,7 +205,6 @@ class Field:
   """A collection of cells."""
   def __init__(self, cells: Iterable[Cell]) -> None:
       self.cells: List[Cell] = list(cells)
-      self.prev_active_cells: Set[Cell] = set()
 
   def __iter__(self):
       return iter(self.cells)
@@ -222,18 +216,16 @@ class Field:
           raise ValueError("Cannot sample more cells than are in the field.")
       return set(random.sample(list(self.cells), n))
 
-  def clear_states(self) -> None:
-    self.prev_active_cells = self._build_prev_active_cells()
-  
   @property
   def active_cells(self) -> Set[Cell]:
       """Return set of previously active cells in the field."""
       return {cell for cell in self.cells if cell.active}
 
-  def _build_prev_active_cells(self) -> Set[Cell]:
+  @property
+  def prev_active_cells(self) -> Set[Cell]:
       """Return set of previously active cells in the field."""
       return {cell for cell in self.cells if cell.prev_active}
-    
+
   @property
   def predictive_cells(self) -> Set[Cell]:
       """Return set of previously active cells in the field."""
@@ -525,7 +517,6 @@ class ColumnField(Field):
 
     def clear_states(self) -> None:
         """Clear active and bursting states for all columns and cells."""
-        super().clear_states()
         self.active_columns.clear()
         for column in self.columns:
             column.clear_states()
@@ -557,7 +548,6 @@ class InputField(Field, RandomDistributedScalarEncoder):
         return super().decode(bit_vector, candidates)
     
     def clear_states(self) -> None:
-        super().clear_states()
         for cell in self.cells:
             cell.clear_states()
 

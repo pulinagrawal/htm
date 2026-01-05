@@ -39,8 +39,6 @@ class TestRealData(unittest.TestCase):
             non_spatial=True,
             num_columns=config["num_columns"],
             cells_per_column=config["cells_per_column"],
-            activation_threshold=config["activation_threshold"],
-            learning_threshold=config["learning_threshold"],
         )
 
         sine_cycle = np.sin(
