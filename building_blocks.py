@@ -150,15 +150,15 @@ class Segment(Active, Learning):
         self.parent_cell: Cell = parent_cell
         self.synapses: List[DistalSynapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
-        self.max_synapses = int(.2*len(self.parent_cell.distal_field.cells))
-        self.activation_threshold: int = int(.002*self.max_synapses)
-        self.learning_threshold_connected_pct: float = .1
+        self.max_synapses = int(.08*len(self.parent_cell.distal_field.cells))
+        self.activation_threshold: float = .1
+        self.learning_threshold_connected_pct: float = .2
     
     def activate_segment(self):
         """Return connected synapses whose source cell is active."""
         connected_synapses = [syn for syn in self.synapses 
                               if syn.source_cell.active and syn.permanence >= CONNECTED_PERM]
-        if len(connected_synapses) >= self.activation_threshold:
+        if len(connected_synapses) >= self.activation_threshold*len(self.synapses):
             self.set_active()
             self.parent_cell.set_predictive()
     
@@ -285,7 +285,9 @@ class Column(Active, Bursting):
         # Find a cell with segment that has most synapses to cell activations
         for cell in self.cells:
             best_segment = cell.find_best_predictive_segment()
-            if best_segment is not None and (synapse_count:= len(best_segment.get_synapses_to_prev_active_cells())) > highest_synapse_count:
+            if best_segment is not None and \
+                    (synapse_count:= len(best_segment.get_synapses_to_prev_active_cells())) > highest_synapse_count\
+                    and best_segment.meets_learning_threshold():
                 highest_synapse_count = synapse_count
                 best_cell = cell
         
@@ -391,8 +393,9 @@ class ColumnField(Field):
                 column.set_bursting()
                 # Two possible implementations: set all active, or set best matching active
                 # column.get_best_matching_cell().set_active()
-                for cell in column.cells:
-                    cell.set_active()
+                column.get_best_learning_cell().set_active()
+                # for cell in column.cells:
+                    # cell.set_active()
 
     def learn_cells(self) -> None:
         for cell in self.predictive_cells:
