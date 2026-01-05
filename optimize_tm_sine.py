@@ -9,6 +9,7 @@ from itertools import product
 from pathlib import Path
 from typing import Iterable, List
 from tqdm import tqdm
+import random
 
 import numpy as np
 
@@ -230,7 +231,6 @@ def main() -> None:
     else:
         print("\nNo passing configuration found; inspect the JSON log for details.")
 
-import random
 def test_sine_wave_bursting_columns_converge():
         """Test ColumnField bursts converge to zero on a learned sine-driven sequence."""
         config = {
@@ -288,6 +288,9 @@ def test_sine_wave_bursting_columns_converge():
         evaluation_bursts = []
 
         for value in sine_cycle:
+            input_fields = column_field.get_prediction()
+            prediction, confidence = input_field.decode(input_fields[0])
+            assert abs(prediction - value) < 0.1, f"Prediction {prediction} not close to actual {value}"
             input_field.encode(value)
             column_field.compute(learn=False)
             evaluation_bursts.append(len(column_field.bursting_columns))

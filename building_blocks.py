@@ -319,9 +319,10 @@ class ColumnField(Field):
         non_spatial: bool = False,
         non_temporal: bool = False,
     ) -> None:
+        self.input_fields: List[Field] = list(input_fields)
         self.non_spatial = non_spatial
         self.non_temporal = non_temporal
-        self.input_field = Field(chain.from_iterable(input_fields))
+        self.input_field = Field(chain.from_iterable(self.input_fields))
         if self.non_temporal:
             cells_per_column = 1
         if self.non_spatial:
@@ -428,6 +429,37 @@ class ColumnField(Field):
     def bursting_columns(self) -> List[Column]:
         """Return list of currently bursting columns."""
         return [column for column in self.columns if column.bursting]
+    
+    def get_prediction(self) -> List[Field]:
+        """Return column-level predictive state and update source fields."""
+        column_cells: List[Cell] = []
+        for column in self.columns:
+            column_cell = Cell(parent_column=column)
+            if any(cell.predictive for cell in column.cells):
+                column_cell.set_predictive()
+            column_cells.append(column_cell)
+
+        prediction_field = Field(column_cells)
+
+        if not self.input_fields:
+            return [prediction_field]
+
+        total_input_cells = sum(len(field.cells) for field in self.input_fields)
+        if total_input_cells != len(self.columns):
+            raise ValueError(
+                "Cannot split predictions into input_fields because the number of "
+                "columns does not match the combined size of the input fields."
+            )
+
+        split_fields: List[Field] = []
+        offset = 0
+        for source_field in self.input_fields:
+            field_size = len(source_field.cells)
+            column_slice = column_cells[offset : offset + field_size]
+            split_fields.append(Field(column_slice))
+            offset += field_size
+
+        return split_fields
                 
     def print_stats(self) -> None:
         """Print statistics about the current stats (with stddev) of the segments  and synapses in the ColumnField."""
@@ -516,6 +548,13 @@ class InputField(Field, RandomDistributedScalarEncoder):
             if encoded_bits[idx]:
                 cell.set_active()
         return encoded_bits
+
+    def decode(self, encoded: Field, state :str='active', candidates: Iterable[float] | None = None) -> Tuple[float | None]:
+        """Convert active cells back to input value using RDSE decoding."""
+        if state not in ('active', 'predictive'):
+            raise ValueError(f"Invalid state '{state}'; must be 'active' or 'predictive'")
+        bit_vector = [getattr(cell, state)  for cell in self.cells]
+        return super().decode(bit_vector, candidates)
     
     def clear_states(self) -> None:
         super().clear_states()
