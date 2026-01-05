@@ -13,6 +13,8 @@ from typing import (
     Any,
 )
 
+from statistics import fmean, pstdev
+
 from rdse import RDSEParameters, RandomDistributedScalarEncoder
 
 # Constants
@@ -80,14 +82,14 @@ class Cell(Active, Predictive):
         self,
         parent_column: 'Column' = None,
         distal_field: 'Field' = None,
-        learning_threshold: int = LEARNING_THRESHOLD,
+        learning_segment_connected_synapse_pct: float = .1,
         activation_threshold: int = ACTIVATION_THRESHOLD,
     ) -> None:
         super().__init__()
         self.parent_column = parent_column
         self.distal_field = distal_field
         self.segments: List['Segment'] = []
-        self.learning_threshold = learning_threshold
+        self.learning_segment_connected_synapse_pct = learning_segment_connected_synapse_pct
         self.activation_threshold = activation_threshold
         
     def initialize(self, distal_field: 'Field') -> None:
@@ -117,7 +119,11 @@ class Cell(Active, Predictive):
 
     def get_best_learning_segment(self):
         best_learning_segment = self.find_best_predictive_segment()
-        if best_learning_segment is None or len(best_learning_segment.get_synapses_to_prev_active_cells()) < self.learning_threshold:
+        if best_learning_segment is None or \
+             len(best_learning_segment.get_synapses_to_prev_active_cells()) \
+                < len(best_learning_segment.synapses)*self.learning_segment_connected_synapse_pct:
+        #len(best_learning_segment.synapses)*.5:
+        #self.learning_threshold:
             best_learning_segment = Segment(
                 parent_cell=self,
                 activation_threshold=self.activation_threshold,
@@ -160,12 +166,13 @@ class Segment(Active, Learning):
         synapses: Optional[List[DistalSynapse]] = None,
         activation_threshold: int = ACTIVATION_THRESHOLD,
     ) -> None:
+        global g
         super().__init__()
         self.parent_cell: Cell = parent_cell
         self.synapses: List[DistalSynapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
-        self.activation_threshold: int = activation_threshold 
-        self.max_synapses = RECEPTIVE_FIELD_PCT*len(self.parent_cell.distal_field.cells)
+        self.max_synapses = int(.2*len(self.parent_cell.distal_field.cells))
+        self.activation_threshold: int = int(.002*self.max_synapses)
     
     def activate_segment(self) -> List[DistalSynapse]:
         """Return connected synapses whose source cell is active."""
@@ -179,24 +186,6 @@ class Segment(Active, Learning):
         """Return synapses whose source cell is active (ignores permanence threshold)."""
         return [syn for syn in self.synapses if syn.source_cell in self.parent_cell.distal_field.prev_active_cells]
     
-    def meets_activation_threshold(
-        self,
-        active_cells: Set[Cell],
-        threshold: Optional[int] = None,
-        connected_perm: float = CONNECTED_PERM,
-    ) -> bool:
-        """Return True if segment has at least threshold connected synapses to active cells."""
-        effective_threshold = self.activation_threshold if threshold is None else threshold
-        if effective_threshold <= 0:
-            return True
-        count = 0
-        for syn in self.synapses:
-            if syn.permanence >= connected_perm and syn.source_cell in active_cells:
-                count += 1
-                if count >= effective_threshold:
-                    return True
-        return False
-
     def adapt(self, strength) -> None:
         # Strengthen synapses to active cells
         prev_active_cells = self.parent_cell.distal_field.prev_active_cells-{self.parent_cell}
@@ -236,6 +225,7 @@ class Field:
   """A collection of cells."""
   def __init__(self, cells: Iterable[Cell]) -> None:
       self.cells: List[Cell] = list(cells)
+      self.prev_active_cells: Set[Cell] = set()
 
   def __iter__(self):
       return iter(self.cells)
@@ -246,14 +236,16 @@ class Field:
       if n > len(self.cells):
           raise ValueError("Cannot sample more cells than are in the field.")
       return set(random.sample(list(self.cells), n))
+
+  def clear_states(self) -> None:
+    self.prev_active_cells = self._build_prev_active_cells()
   
   @property
   def active_cells(self) -> Set[Cell]:
       """Return set of previously active cells in the field."""
       return {cell for cell in self.cells if cell.active}
 
-  @property
-  def prev_active_cells(self) -> Set[Cell]:
+  def _build_prev_active_cells(self) -> Set[Cell]:
       """Return set of previously active cells in the field."""
       return {cell for cell in self.cells if cell.prev_active}
     
@@ -269,11 +261,9 @@ class Column(Active, Bursting):
         self,
         input_field: Field = None,
         cells_per_column: int = 1,
-        learning_threshold: int = LEARNING_THRESHOLD,
         activation_threshold: int = ACTIVATION_THRESHOLD,
     ) -> None:
         super().__init__()
-        self.learning_threshold = learning_threshold
         self.activation_threshold = activation_threshold
         self.input_field: Field = input_field
         if input_field is not None:
@@ -285,7 +275,6 @@ class Column(Active, Bursting):
         self.cells: List[Cell] = [
             Cell(
                 parent_column=self,
-                learning_threshold=self.learning_threshold,
                 activation_threshold=self.activation_threshold,
             )
             for _ in range(cells_per_column)
@@ -362,7 +351,6 @@ class ColumnField(Field):
             self.columns: List[Column] = [
                 Column(
                     cells_per_column=cells_per_column,
-                    learning_threshold=self.learning_threshold,
                     activation_threshold=self.activation_threshold,
                 )
                 for _ in range(num_columns)
@@ -372,7 +360,6 @@ class ColumnField(Field):
                 Column(
                     self.input_field,
                     cells_per_column=cells_per_column,
-                    learning_threshold=self.learning_threshold,
                     activation_threshold=self.activation_threshold,
                 )
                 for _ in range(num_columns)
@@ -466,8 +453,71 @@ class ColumnField(Field):
         """Return list of currently bursting columns."""
         return [column for column in self.columns if column.bursting]
                 
+    def print_stats(self) -> None:
+        """Print statistics about the current stats (with stddev) of the segments  and synapses in the ColumnField."""
+        def describe(values: List[float]) -> Tuple[int, float, float, float, float]:
+            if not values:
+                return 0, 0.0, 0.0, 0.0, 0.0
+            count = len(values)
+            mean_val = fmean(values)
+            std_val = pstdev(values) if count > 1 else 0.0
+            return count, mean_val, std_val, min(values), max(values)
+
+        def format_metric(
+            label: str,
+            stats: Tuple[int, float, float, float, float],
+            value_precision: str = ".2f",
+            extrema_precision: str = ".0f",
+        ) -> str:
+            _, mean_val, std_val, min_val, max_val = stats
+            mean_str = format(mean_val, value_precision)
+            std_str = format(std_val, value_precision)
+            min_str = format(min_val, extrema_precision)
+            max_str = format(max_val, extrema_precision)
+            return (
+                f"| {label:<22}| {mean_str:>8} ± {std_str:<8}| {min_str:>8} | {max_str:>8} |"
+            )
+
+        segments_per_cell = [len(cell.segments) for cell in self.cells]
+        all_segments = [segment for cell in self.cells for segment in cell.segments]
+        synapses_per_segment = [len(segment.synapses) for segment in all_segments]
+        all_synapses = [syn for segment in all_segments for syn in segment.synapses]
+        permanences = [syn.permanence for syn in all_synapses]
+
+        seg_count, seg_mean, seg_std, seg_min, seg_max = describe(segments_per_cell)
+        syn_count, syn_mean, syn_std, syn_min, syn_max = describe(synapses_per_segment)
+        perm_count, perm_mean, perm_std, perm_min, perm_max = describe(permanences)
+
+        connected_synapses = sum(1 for syn in all_synapses if syn.permanence >= CONNECTED_PERM)
+        connected_ratio = (connected_synapses / perm_count) if perm_count else 0.0
+
+        table_lines = [
+            "+------------------------+--------------------+----------+----------+",
+            "| Metric                 |   Mean ± Std      |      Min |      Max |",
+            "+------------------------+--------------------+----------+----------+",
+            format_metric("Segments per cell", (seg_count, seg_mean, seg_std, seg_min, seg_max)),
+            format_metric("Synapses per segment", (syn_count, syn_mean, syn_std, syn_min, syn_max)),
+            format_metric(
+                "Permanence",
+                (perm_count, perm_mean, perm_std, perm_min, perm_max),
+                value_precision=".3f",
+                extrema_precision=".3f",
+            ),
+            "+------------------------+--------------------+----------+----------+",
+        ]
+
+        print("ColumnField statistics:")
+        print(f"  Columns: {len(self.columns)} | Cells: {len(self.cells)} | Segments: {len(all_segments)} | Synapses: {len(all_synapses)}")
+        for line in table_lines:
+            print(f"  {line}")
+        print(
+            f"  Connected synapses (>= {CONNECTED_PERM}): {connected_synapses}"
+            f" ({connected_ratio:.1%} of all synapses)"
+        )
+
     def clear_states(self) -> None:
         """Clear active and bursting states for all columns and cells."""
+        super().clear_states()
         self.active_columns :List[Column] = []
         for column in self.columns:
             column.clear_states()
@@ -492,6 +542,7 @@ class InputField(Field, RandomDistributedScalarEncoder):
         return encoded_bits
     
     def clear_states(self) -> None:
+        super().clear_states()
         for cell in self.cells:
             cell.clear_states()
 
