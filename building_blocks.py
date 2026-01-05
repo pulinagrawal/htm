@@ -5,12 +5,8 @@ from typing import (
     Iterable,
     List,
     Set,
-    Dict,
     Tuple,
     Optional,
-    Sequence,
-    Union,
-    Any,
 )
 
 from statistics import fmean, pstdev
@@ -19,16 +15,12 @@ from rdse import RDSEParameters, RandomDistributedScalarEncoder
 
 # Constants
 CONNECTED_PERM = 0.5  # Permanence threshold for a synapse to be considered connected
-MIN_OVERLAP = 3       # Minimum overlap to be considered during inhibition
 DESIRED_LOCAL_SPARSITY = 0.02  # Desired local sparsity for inhibition
-INHIBITION_RADIUS = 1.0  # Sets the locality radius for desired sparsity
-ACTIVATION_THRESHOLD = 3  # Number of active connected synapses for a segment to be active
-LEARNING_THRESHOLD = 5  # Threshold of active synapses for a segment to be considered for learning
 INITIAL_PERMANENCE = 0.21  # Initial permanence for new synapses
 PERMANENCE_INC = 0.05  # Amount by which synapses are incremented during learning
 PERMANENCE_DEC = 0.05  # Amount by which synapses are decremented during learning
 GROWTH_STRENGTH = 0.1  # Fraction of max synapses to grow on a segment during learning
-RECEPTIVE_FIELD_PCT = 0.2
+RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
 
 
 def make_state_class(label: str):
@@ -82,15 +74,11 @@ class Cell(Active, Predictive):
         self,
         parent_column: 'Column' = None,
         distal_field: 'Field' = None,
-        learning_segment_connected_synapse_pct: float = .1,
-        activation_threshold: int = ACTIVATION_THRESHOLD,
     ) -> None:
         super().__init__()
         self.parent_column = parent_column
         self.distal_field = distal_field
         self.segments: List['Segment'] = []
-        self.learning_segment_connected_synapse_pct = learning_segment_connected_synapse_pct
-        self.activation_threshold = activation_threshold
         
     def initialize(self, distal_field: 'Field') -> None:
         self.distal_field = distal_field
@@ -119,14 +107,9 @@ class Cell(Active, Predictive):
 
     def get_best_learning_segment(self):
         best_learning_segment = self.find_best_predictive_segment()
-        if best_learning_segment is None or \
-             len(best_learning_segment.get_synapses_to_prev_active_cells()) \
-                < len(best_learning_segment.synapses)*self.learning_segment_connected_synapse_pct:
-        #len(best_learning_segment.synapses)*.5:
-        #self.learning_threshold:
+        if best_learning_segment is None or not best_learning_segment.meets_learning_threshold():
             best_learning_segment = Segment(
                 parent_cell=self,
-                activation_threshold=self.activation_threshold,
             )
             self.segments.append(best_learning_segment)
         return best_learning_segment
@@ -164,15 +147,14 @@ class Segment(Active, Learning):
         self,
         parent_cell: Cell = None,
         synapses: Optional[List[DistalSynapse]] = None,
-        activation_threshold: int = ACTIVATION_THRESHOLD,
     ) -> None:
-        global g
         super().__init__()
         self.parent_cell: Cell = parent_cell
         self.synapses: List[DistalSynapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
         self.max_synapses = int(.2*len(self.parent_cell.distal_field.cells))
         self.activation_threshold: int = int(.002*self.max_synapses)
+        self.learning_threshold_connected_pct: float = .1
     
     def activate_segment(self) -> List[DistalSynapse]:
         """Return connected synapses whose source cell is active."""
@@ -181,6 +163,10 @@ class Segment(Active, Learning):
         if len(connected_synapses) >= self.activation_threshold:
             self.set_active()
             self.parent_cell.set_predictive()
+    
+    def meets_learning_threshold(self) -> bool:
+        """Return True if segment meets learning threshold."""
+        return len(self.get_synapses_to_prev_active_cells()) > self.learning_threshold_connected_pct*len(self.synapses):
     
     def get_synapses_to_prev_active_cells(self) -> List[DistalSynapse]:
         """Return synapses whose source cell is active (ignores permanence threshold)."""
@@ -261,10 +247,8 @@ class Column(Active, Bursting):
         self,
         input_field: Field = None,
         cells_per_column: int = 1,
-        activation_threshold: int = ACTIVATION_THRESHOLD,
     ) -> None:
         super().__init__()
-        self.activation_threshold = activation_threshold
         self.input_field: Field = input_field
         if input_field is not None:
             self.receptive_field: Set[Cell] = self.input_field.sample(RECEPTIVE_FIELD_PCT)
@@ -275,7 +259,6 @@ class Column(Active, Bursting):
         self.cells: List[Cell] = [
             Cell(
                 parent_column=self,
-                activation_threshold=self.activation_threshold,
             )
             for _ in range(cells_per_column)
         ]
@@ -336,13 +319,9 @@ class ColumnField(Field):
         cells_per_column: int = 1,
         non_spatial: bool = False,
         non_temporal: bool = False,
-        activation_threshold: int = ACTIVATION_THRESHOLD,
-        learning_threshold: int = LEARNING_THRESHOLD,
     ) -> None:
         self.non_spatial = non_spatial
         self.non_temporal = non_temporal
-        self.activation_threshold = activation_threshold
-        self.learning_threshold = learning_threshold
         self.input_field = Field(chain.from_iterable(input_fields))
         if self.non_temporal:
             cells_per_column = 1
@@ -351,7 +330,6 @@ class ColumnField(Field):
             self.columns: List[Column] = [
                 Column(
                     cells_per_column=cells_per_column,
-                    activation_threshold=self.activation_threshold,
                 )
                 for _ in range(num_columns)
             ]
@@ -360,7 +338,6 @@ class ColumnField(Field):
                 Column(
                     self.input_field,
                     cells_per_column=cells_per_column,
-                    activation_threshold=self.activation_threshold,
                 )
                 for _ in range(num_columns)
             ]
