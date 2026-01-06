@@ -16,7 +16,7 @@ class TestRealData(unittest.TestCase):
             "activation_threshold": 3,
             "learning_threshold": 5,
             "active_bits": 16,
-            "resolution": 0.1,
+            "resolution": 0.01,
             "cycle_length": 64,
             "rdse_seed": 5,
             "total_steps": 1000,
