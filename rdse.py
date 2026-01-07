@@ -23,28 +23,28 @@ from base_encoder import BaseEncoder
 @dataclass
 class RDSEParameters:
 
-    size: int = 512
+    size: int = 0
     """
     * Member "size" is the total number of bits in the encoded output SDR.
     """
-    active_bits: int = int(512*.02)
+    active_bits: int = 0
     """
     * Member "activeBits" is the number of true bits in the encoded output SDR.
     """
-    sparsity: float = 0.02
+    sparsity: float = 0
     """
     * Member "sparsity" is the fraction of bits in the encoded output which this
     * encoder will activate. This is an alternative way to specify the member
     * "activeBits".
     """
-    radius: float = 1
+    radius: float = 0
     """
     * Member "radius" Two inputs separated by more than the radius have
     * non-overlapping representations. Two inputs separated by less than the
     * radius will in general overlap in at least some of their bits. You can
     * think of this as the radius of the input.
     """
-    resolution: float = .5
+    resolution: float = 0
     """
     * Member "resolution" Two inputs separated by greater than, or equal to the
     * resolution will in general have different representations.
@@ -55,7 +55,7 @@ class RDSEParameters:
     * If true then this encoder will only encode unsigned integers, and all
     * inputs will have unique / non-overlapping representations.
     """
-    seed: int = int(random.random()*10000)
+    seed: int = 0
     """
     * Member "seed" forces different encoders to produce different outputs, even
     * if the inputs and all other parameters are the same.  Two encoders with the

@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from building_blocks import InputField, ColumnField
+from HTM import InputField, ColumnField
 from rdse import RDSEParameters
 
 class TestRealData(unittest.TestCase):
@@ -11,12 +11,10 @@ class TestRealData(unittest.TestCase):
     def test_sine_wave_bursting_columns_converge(self):
         """Test ColumnField bursts converge to zero on a learned sine-driven sequence."""
         config = {
-            "num_columns": 512,
+            "num_columns": 1024,
             "cells_per_column": 16,
-            "activation_threshold": 3,
-            "learning_threshold": 5,
-            "active_bits": 16,
-            "resolution": 0.01,
+            "sparsity": 0.02,
+            "resolution": 0.001,
             "cycle_length": 64,
             "rdse_seed": 5,
             "total_steps": 1000,
@@ -26,9 +24,7 @@ class TestRealData(unittest.TestCase):
         random.seed(42)
         params = RDSEParameters(
             size=config["num_columns"],
-            active_bits=config["active_bits"],
-            sparsity=0.0,
-            radius=0.0,
+            sparsity=config["sparsity"],
             resolution=config["resolution"],
             category=False,
             seed=config["rdse_seed"],
