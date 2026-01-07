@@ -92,24 +92,6 @@ class Cell(Active, Predictive, Learning):
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
 
-    def find_best_learning_segment(self) -> 'Segment|None':
-        """Return segment with most synapses to the given active cells.
-
-        The tuple structure avoids call-site conditionals and always exposes both
-        the winning segment (if any) and its match count.
-        """
-        best_segment = None
-        max_synapses_to_active_cells = -1
-        
-        for segment in self.segments:
-            # Code can improved to push the learning threshold down to segment level
-            synapses_to_active_cells = segment.get_synapses_to_prev_learning_cells()
-            if len(synapses_to_active_cells) > max_synapses_to_active_cells:
-                max_synapses_to_active_cells = len(synapses_to_active_cells)
-                best_segment = segment
-
-        return best_segment
-
     def find_best_predictive_segment(self) -> 'Segment|None':
         """Return segment with most synapses to the given active cells.
 
@@ -128,9 +110,45 @@ class Cell(Active, Predictive, Learning):
 
         return best_segment
 
+    def find_best_learning_segment(self) -> 'Segment|None':
+        """Return segment with most synapses to the given active cells.
+
+        The tuple structure avoids call-site conditionals and always exposes both
+        the winning segment (if any) and its match count.
+        """
+        best_segment = None
+        max_synapses_to_active_cells = -1
+        
+        for segment in self.segments:
+            # Code can improved to push the learning threshold down to segment level
+            synapses_to_active_cells = segment.get_synapses_to_prev_learning_cells()
+            if len(synapses_to_active_cells) > max_synapses_to_active_cells:
+                max_synapses_to_active_cells = len(synapses_to_active_cells)
+                best_segment = segment
+
+        return best_segment
+
+    def find_best_matching_segment(self) -> 'Segment|None':
+        """Return segment with most synapses to the given active cells.
+
+        The tuple structure avoids call-site conditionals and always exposes both
+        the winning segment (if any) and its match count.
+        """
+        best_segment = None
+        max_synapses_to_active_cells = 0
+        
+        for segment in self.segments:
+            # Code can improved to push the learning threshold down to segment level
+            synapses_to_active_cells = segment.get_matching_score()
+            if len(synapses_to_active_cells) > max_synapses_to_active_cells:
+                max_synapses_to_active_cells = len(synapses_to_active_cells)
+                best_segment = segment
+
+        return best_segment
+
     def get_best_learning_segment(self):
-        best_learning_segment = self.find_best_learning_segment()
-        if best_learning_segment is None or not best_learning_segment.meets_learning_threshold():
+        best_learning_segment = self.find_best_matching_segment()
+        if best_learning_segment is None:
             best_learning_segment = Segment(
                 parent_cell=self,
             )
@@ -180,6 +198,16 @@ class Segment(Active, Learning):
         self.activation_threshold: float = ACTIVATION_THRESHOLD_PCT
         self.learning_threshold_connected_pct: float = LEARNING_THRESHOLD_PCT
     
+    def is_prev_active(self) -> bool:
+        connected_synapses = [syn for syn in self.synapses 
+                              if syn.source_cell.prev_active and syn.permanence >= CONNECTED_PERM]
+        return len(connected_synapses) > self.activation_threshold*len(self.synapses)
+    
+    def is_active(self) -> bool:
+        connected_synapses = [syn for syn in self.synapses 
+                              if syn.source_cell.active and syn.permanence >= CONNECTED_PERM]
+        return len(connected_synapses) > self.activation_threshold*len(self.synapses)
+
     def activate_segment(self):
         """Return connected synapses whose source cell is active."""
         connected_synapses = [syn for syn in self.synapses 
@@ -203,6 +231,13 @@ class Segment(Active, Learning):
     def get_synapses_to_prev_learning_cells(self) -> List[DistalSynapse]:
         """Return synapses whose source cell is active (ignores permanence threshold)."""
         return [syn for syn in self.synapses if syn.source_cell is not None and syn.source_cell.prev_learning]
+
+    def get_matching_score(self) -> List[DistalSynapse]:
+        """Return connected synapses whose source cell is active."""
+        score = 0
+        score += sum([1 for syn in self.synapses if syn.source_cell.prev_active and syn.permanence >= CONNECTED_PERM])
+        score += sum([syn.permanence for syn in self.synapses if syn.source_cell.prev_active and syn.permanence < CONNECTED_PERM])
+        return score
     
     def adapt(self, strength) -> None:
         # Strengthen synapses to active cells
@@ -334,18 +369,18 @@ class Column(Active, Bursting):
              fallback to cell with fewest segments.
         """
         best_cell = None
-        highest_synapse_count = -1
+        highest_score = -1
         
-        # Find a cell with segment that has most synapses to cell activations
+        # Find a cell with a segment that best matches prior activity
         for cell in self.cells:
-            best_segment = cell.find_best_learning_segment()
-            if best_segment is not None and \
-                    (synapse_count:= len(best_segment.get_synapses_to_prev_learning_cells())) > highest_synapse_count:
-                highest_synapse_count = synapse_count
+            candidate_segment = cell.find_best_matching_segment()
+            score = candidate_segment.get_matching_score() if candidate_segment else 0
+            if score > highest_score:
+                highest_score = score
                 best_cell = cell
-        
+
         if best_cell is None:
-            # Select cell with fewest segments 
+            # Select cell with fewest segments as a fallback
             best_cell = min(self.cells, key=lambda c: len(c.segments))
         
         return best_cell
@@ -421,10 +456,11 @@ class ColumnField(Field):
         else:
             self.activate_cells()
 
-            if learn:
-                self.learn_cells()
-
             self.depolarize_cells()
+
+            if learn:
+                self.learn()
+
         self._update_duty_cycles()
     
     def activate_columns(self) -> None:
@@ -442,51 +478,74 @@ class ColumnField(Field):
             col.set_active()
     
     def activate_cells(self) -> None:
-        for cell in self.predictive_cells:
-            if cell.parent_column.active:
-                cell.set_active()
-                cell.set_learning()
         for column in self.active_columns:
-            if not any(cell.predictive for cell in column.cells):
-                column.set_bursting()
-                # for cell in column.cells:
-                #     cell.set_active()
-                # Two possible implementations: set all active, or set best matching active
+            predictive_pairs = self._collect_prev_active_segments(column)
+            if predictive_pairs:
+                self._activate_predicted_column(column, predictive_pairs)
+            else:
+                self._burst_column(column)
 
-                # column.get_best_matching_cell().set_active()
-                best_cell = column.get_best_learning_cell()
-                best_cell.set_active()
-                best_cell.set_learning()
-                # for cell in column.cells:
-                    # cell.set_active()
+    def _collect_prev_active_segments(self, column: Column) -> List[Tuple[Cell, Segment]]:
+        """Return (cell, segment) pairs whose segments were active last step."""
+        candidates: List[Tuple[Cell, Segment]] = []
+        for cell in column.cells:
+            for segment in cell.segments:
+                if segment.prev_active:
+                    candidates.append((cell, segment))
+        return candidates
 
-    def learn_cells(self) -> None:
-        for cell in self.prev_predictive_cells:
-            # An implementation choice: only learn if cell was active
-            # or learn on all predictive cells (strengthen/weaken synapses)
-            if cell.active:
-                for segment in cell.segments:
-                    if segment.prev_active:
-                        segment.learn()
-            else: 
+    def _activate_predicted_column(
+        self,
+        column: Column,
+        candidates: List[Tuple[Cell, Segment]],
+    ) -> None:
+        """Activate predicted cells and select a single learning segment."""
+        for cell, _ in candidates:
+            cell.set_active()
+
+        learning_cell, learning_segment = max(
+            candidates,
+            key=lambda pair: len(pair[1].get_synapses_to_prev_active_cells()),
+        )
+        learning_cell.set_learning()
+        learning_segment.set_learning()
+
+    def _burst_column(self, column: Column) -> None:
+        """Burst the column and choose a best-matching learning segment."""
+        column.set_bursting()
+        for cell in column.cells:
+            cell.set_active()
+
+        learning_cell = column.get_best_learning_cell()
+        learning_segment = learning_cell.get_best_learning_segment()
+        learning_cell.set_learning()
+        learning_segment.set_learning()
+
+    def depolarize_cells(self) -> None:
+        for cell in self.cells:
+            for segment in cell.segments:
+                if segment.is_active():
+                    segment.set_active()
+                    cell.set_predictive()
+                else:
+                    segment.clear_active()
+
+    def learn(self) -> None:
+        self._punish_false_predictions()
+
+        for cell in self.cells:
+            for segment in cell.segments:
+                if segment.learning:
+                    segment.learn()
+                    segment.clear_learning()
+    
+
+    def _punish_false_predictions(self) -> None:
+        for cell in self.cells:
+            if cell.prev_predictive and not cell.active:
                 for segment in cell.segments:
                     if segment.prev_active:
                         segment.weaken()
-
-        for column in self.active_columns:
-            if column.bursting:
-                # Implementation choice: only best matching cell learns, or
-                best_cell = column.get_best_learning_cell()
-                best_cell.get_best_learning_segment().learn() 
-                # or all cells learn
-                # runs for tooooo long 
-                # for cell in column.cells:
-                #    cell.get_best_learning_segment().learn()
-    
-    def depolarize_cells(self) -> None:
-        for cell in self.cells:
-          for segment in cell.segments:
-              segment.activate_segment()
 
     def _update_duty_cycles(self) -> None:
         self._duty_cycle_window = min(self.duty_cycle_period, self._duty_cycle_window + 1)
