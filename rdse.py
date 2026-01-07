@@ -1,9 +1,8 @@
 import copy
-import math
 import random
 import struct
 from dataclasses import dataclass
-from typing import List, override
+from typing import Iterable, List, Tuple, override
 
 import mmh3
 
@@ -91,6 +90,7 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
         self._resolution = self._parameters.resolution
         self._category = self._parameters.category
         self._seed = self._parameters.seed
+        self._encoding_cache: dict[float, List[int]] = {}
 
         super().__init__(dimensions, self._size)
 
@@ -101,6 +101,49 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
 
     @override
     def encode(self, input_value: float) -> List[int]:
+        """Encode the input value into a binary vector."""
+        self.register_encoding(input_value)
+        return self._compute_encoding(input_value)
+
+    def register_encoding(self, input_value: float, encoded: List[int] | None = None) -> List[int]:
+        """Caches an encoding so decode_closest can compare against it."""
+        vector = encoded if encoded is not None else self._compute_encoding(input_value)
+        if len(vector) != self.size:
+            raise ValueError("Stored encoding must be the same length as encoder size")
+        self._encoding_cache[input_value] = vector
+        return vector
+
+    def decode(
+        self, encoded: List[int], candidates: Iterable[float] | None = None
+    ) -> Tuple[float | None, float]:
+        """Returns the value whose encoding overlaps the most with the provided SDR."""
+        if len(encoded) != self.size:
+            raise ValueError("Encoded input must match encoder size")
+
+        search_values = list(candidates) if candidates is not None else list(self._encoding_cache.keys())
+        if not search_values:
+            raise ValueError("No candidate encodings available for decoding")
+
+        best_value: float | None = None
+        best_overlap = -1
+
+        for candidate in search_values:
+            candidate_encoding = self._encoding_cache.get(candidate)
+            if candidate_encoding is None:
+                candidate_encoding = self.register_encoding(candidate)
+            overlap = self._overlap(encoded, candidate_encoding)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_value = candidate
+
+        confidence = best_overlap / self._active_bits if best_overlap >= 0 and self._active_bits else 0.0
+        return best_value, confidence
+
+    def clear_registered_encodings(self) -> None:
+        """Clears cached encodings used for nearest-neighbor decoding."""
+        self._encoding_cache.clear()
+
+    def _compute_encoding(self, input_value: float) -> List[int]:
         if self._category:
             if input_value != int(input_value) or input_value < 0:
                 raise ValueError("Input to category encoder must be an unsigned integer")
@@ -130,6 +173,12 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
             """
             data[bucket] = 1
         return data
+
+    @staticmethod
+    def _overlap(first: List[int], second: List[int]) -> int:
+        if len(first) != len(second):
+            raise ValueError("Vectors must be the same length to compute overlap")
+        return sum(1 for a, b in zip(first, second) if a == 1 and b == 1)
 
     # After encode we may need a check_parameters method since most of the encoders have this
     def check_parameters(self, parameters: RDSEParameters):
