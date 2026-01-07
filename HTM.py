@@ -460,6 +460,37 @@ class ColumnField(Field):
                 if segment.is_potentially_active():
                     segment.set_matching()
 
+    def get_prediction(self) -> List[Field]:
+        """Return column-level predictive state and update source fields."""
+        column_cells: List[Cell] = []
+        for column in self.columns:
+            column_cell = Cell(parent_column=column)
+            if any(cell.predictive for cell in column.cells):
+                column_cell.set_predictive()
+            column_cells.append(column_cell)
+
+        prediction_field = Field(column_cells)
+
+        if not self.input_fields:
+            return [prediction_field]
+
+        total_input_cells = sum(len(field.cells) for field in self.input_fields)
+        if total_input_cells != len(self.columns):
+            raise ValueError(
+                "Cannot split predictions into input_fields because the number of "
+                "columns does not match the combined size of the input fields."
+            )
+
+        split_fields: List[Field] = []
+        offset = 0
+        for source_field in self.input_fields:
+            field_size = len(source_field.cells)
+            column_slice = column_cells[offset : offset + field_size]
+            split_fields.append(Field(column_slice))
+            offset += field_size
+
+        return split_fields
+
     def _update_duty_cycles(self) -> None:
         self._duty_cycle_window = min(self.duty_cycle_period, self._duty_cycle_window + 1)
         alpha = 1.0 / self._duty_cycle_window
