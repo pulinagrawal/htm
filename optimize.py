@@ -3,6 +3,13 @@
 
 This script mirrors manual_test.test_sine_wave_bursting_columns_converge while
 optimizing the ColumnField hyperparameters that govern temporal memory growth.
+
+The output JSON is intentionally schema-light:
+- Each trial stores a free-form ``params`` mapping.
+- Each trial stores a free-form ``metrics`` mapping.
+
+This keeps the optimizer and plotting scripts resilient as you add/remove
+optimized parameters.
 """
 from __future__ import annotations
 
@@ -19,18 +26,8 @@ import numpy as np
 from tqdm import tqdm
 
 import HTM as bb
-from HTM import ColumnField, Field, InputField
+from HTM import CONNECTED_PERM, ColumnField, Field, InputField
 from rdse import RDSEParameters, RandomDistributedScalarEncoder
-
-
-@dataclass(frozen=True)
-class HyperParameters:
-    """Tunables sourced from building_blocks constants."""
-
-    growth_strength: float
-    max_synapse_pct: float
-    activation_threshold_pct: float
-    learning_threshold_pct: float
 
 
 @dataclass(frozen=True)
@@ -53,27 +50,28 @@ class SineConfig:
 class TrialResult:
     """Evaluation summary for a single hyper-parameter combination."""
 
-    params: HyperParameters
-    mean_abs_error: float
-    max_abs_error: float
-    prediction_failures: int
-    avg_eval_bursting_columns: float
-    train_max_initial_burst: int
-    train_final_burst: int
-    score: float
+    params: dict[str, float]
+    metrics: dict[str, float | int | bool]
 
 
 @contextmanager
-def override_tm_constants(params: HyperParameters) -> Iterator[None]:
-    """Temporarily override ColumnField-related constants."""
+def override_tm_constants(params: dict[str, float]) -> Iterator[None]:
+    """Temporarily override ColumnField-related constants.
 
-    overrides = {
-        "GROWTH_STRENGTH": params.growth_strength,
-        "MAX_SYNAPSE_PCT": params.max_synapse_pct,
-        "ACTIVATION_THRESHOLD_PCT": params.activation_threshold_pct,
-        "LEARNING_THRESHOLD_PCT": params.learning_threshold_pct,
-    }
+    Any numeric entry in ``params`` whose upper-cased name exists as an
+    attribute on the HTM module will be overridden.
+    """
+
     previous: dict[str, float] = {}
+    overrides: dict[str, float] = {}
+    for key, value in params.items():
+        constant_name = key.upper()
+        if not hasattr(bb, constant_name):
+            continue
+        if not isinstance(value, (int, float)):
+            continue
+        overrides[constant_name] = float(value)
+
     try:
         for name, value in overrides.items():
             previous[name] = getattr(bb, name)
@@ -93,13 +91,39 @@ def sine_cycle(length: int) -> np.ndarray:
 def decode_prediction(prediction_field: Field, encoder: InputField, candidates: Sequence[float]):
     """Convert predictive column activity into a decoded scalar."""
 
-    bit_vector = [1 if cell.predictive else 0 for cell in prediction_field.cells]
+    bit_vector = [1 if getattr(cell, "predictive", False) else 0 for cell in prediction_field.cells]
     if not any(bit_vector):
         return None, 0.0
     return RandomDistributedScalarEncoder.decode(encoder, bit_vector, candidates)
 
 
-def evaluate_trial(params: HyperParameters, config: SineConfig, sine_values: Sequence[float]) -> TrialResult:
+def describe_structure(column_field: ColumnField) -> tuple[int, int, int]:
+    """Return (total_segments, total_synapses, connected_synapses)."""
+
+    segments = [segment for cell in column_field.cells for segment in cell.segments]
+    synapses = [syn for segment in segments for syn in segment.synapses]
+    connected_synapses = sum(1 for syn in synapses if float(syn.permanence) >= CONNECTED_PERM)
+    return len(segments), len(synapses), connected_synapses
+
+
+def duty_cycle_nonzero_share(values: Sequence[float], *, eps: float = 0.0) -> float:
+    if not values:
+        return 0.0
+    nonzero = sum(1 for value in values if float(value) > eps)
+    return float(nonzero / len(values))
+
+
+def evaluate_trial(
+    params: dict[str, float],
+    config: SineConfig,
+    sine_values: Sequence[float],
+    *,
+    burst_weight: float,
+    segments_weight: float,
+    synapses_weight: float,
+    min_nonzero_duty_share: float,
+    invalid_penalty: float,
+) -> TrialResult:
     """Run the sine-wave test while overriding the requested constants."""
 
     random.seed(config.rng_seed)
@@ -129,6 +153,14 @@ def evaluate_trial(params: HyperParameters, config: SineConfig, sine_values: Seq
             column_field.compute()
             train_bursts.append(len(column_field.bursting_columns))
 
+        total_segments, total_synapses, connected_synapses = describe_structure(column_field)
+        column_duty_share = duty_cycle_nonzero_share(
+            [column.active_duty_cycle for column in column_field.columns]
+        )
+        cell_duty_share = duty_cycle_nonzero_share(
+            [cell.active_duty_cycle for cell in column_field.cells]
+        )
+
         evaluation_steps = config.cycle_length * config.evaluation_cycles
         errors: list[float] = []
         prediction_failures = 0
@@ -155,33 +187,61 @@ def evaluate_trial(params: HyperParameters, config: SineConfig, sine_values: Seq
     train_max_initial = int(max(train_bursts[: min(10, len(train_bursts))])) if train_bursts else 0
     train_final = int(train_bursts[-1]) if train_bursts else 0
 
-    score = mean_abs_error + 0.05 * avg_eval_bursting + 0.01 * train_final
+    total_cells = max(1, config.num_columns * config.cells_per_column)
+    segments_per_cell = total_segments / total_cells
+    synapses_per_cell = total_synapses / total_cells
+    connected_ratio = (connected_synapses / total_synapses) if total_synapses else 0.0
 
-    return TrialResult(
-        params=params,
-        mean_abs_error=mean_abs_error,
-        max_abs_error=max_abs_error,
-        prediction_failures=prediction_failures,
-        avg_eval_bursting_columns=avg_eval_bursting,
-        train_max_initial_burst=train_max_initial,
-        train_final_burst=train_final,
-        score=score,
+    valid = not (
+        column_duty_share < min_nonzero_duty_share and cell_duty_share < min_nonzero_duty_share
     )
 
+    score = (
+        mean_abs_error
+        + burst_weight * avg_eval_bursting
+        + segments_weight * segments_per_cell
+        + synapses_weight * synapses_per_cell
+    )
+    if not valid:
+        score += invalid_penalty
 
-def generate_param_grid(args: argparse.Namespace) -> Iterator[HyperParameters]:
+    metrics: dict[str, float | int | bool] = {
+        "mean_abs_error": mean_abs_error,
+        "max_abs_error": max_abs_error,
+        "prediction_failures": int(prediction_failures),
+        "avg_eval_bursting_columns": avg_eval_bursting,
+        "train_max_initial_burst": int(train_max_initial),
+        "train_final_burst": int(train_final),
+        "total_segments": int(total_segments),
+        "total_synapses": int(total_synapses),
+        "connected_synapses": int(connected_synapses),
+        "connected_synapse_ratio": float(connected_ratio),
+        "column_duty_nonzero_share": float(column_duty_share),
+        "cell_duty_nonzero_share": float(cell_duty_share),
+        "valid": bool(valid),
+        "score": float(score),
+    }
+
+    return TrialResult(params=params, metrics=metrics)
+
+
+def generate_param_grid(args: argparse.Namespace) -> Iterator[dict[str, float]]:
     """Create a deterministic Cartesian product over the provided value lists."""
 
     for growth in args.growth_strengths:
         for max_syn in args.max_synapse_pcts:
             for activation in args.activation_threshold_pcts:
                 for learning in args.learning_threshold_pcts:
-                    yield HyperParameters(
-                        growth_strength=growth,
-                        max_synapse_pct=max_syn,
-                        activation_threshold_pct=activation,
-                        learning_threshold_pct=activation*learning,
-                    )
+                    for predicted_decrement in args.predicted_decrement_pcts:
+                        for receptive_field in args.receptive_field_pcts:
+                            yield {
+                                "growth_strength": float(growth),
+                                "max_synapse_pct": float(max_syn),
+                                "activation_threshold_pct": float(activation),
+                                "learning_threshold_pct": float(activation)*float(learning),
+                                "predicted_decrement_pct": float(predicted_decrement),
+                                "receptive_field_pct": float(receptive_field),
+                            }
 
 
 def parse_args() -> argparse.Namespace:
@@ -191,10 +251,39 @@ def parse_args() -> argparse.Namespace:
             "Defaults mirror manual_test.test_sine_wave_bursting_columns_converge."
         )
     )
-    parser.add_argument("--growth-strengths", type=float, nargs="+", default=[0.9])
+    parser.add_argument("--growth-strengths", type=float, nargs="+", default=[0.9, 0.5, 0.1])
     parser.add_argument("--max-synapse-pcts", type=float, nargs="+", default=[0.02])
     parser.add_argument("--activation-threshold-pcts", type=float, nargs="+", default=[0.1, 0.5, 0.8])
     parser.add_argument("--learning-threshold-pcts", type=float, nargs="+", default=[0.9, 0.5, 0.1])
+    parser.add_argument(
+        "--predicted-decrement-pcts",
+        dest="predicted_decrement_pcts",
+        type=float,
+        nargs="+",
+        default=[0.9, 0.5, 0.1],
+    )
+    parser.add_argument(
+        "--receptive-field-pcts",
+        dest="receptive_field_pcts",
+        type=float,
+        nargs="+",
+        default=[0.9, 0.5, 0.1],
+    )
+    # Backwards-compat aliases
+    parser.add_argument(
+        "--predicted_decrement_pct",
+        dest="predicted_decrement_pcts",
+        type=float,
+        nargs="+",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--receptive_field_pct",
+        dest="receptive_field_pcts",
+        type=float,
+        nargs="+",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--num-columns", type=int, default=1024)
     parser.add_argument("--cells-per-column", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=1_000)
@@ -211,6 +300,24 @@ def parse_args() -> argparse.Namespace:
         help="Destination JSON file for all trial metrics.",
     )
     parser.add_argument("--top-k", type=int, default=3, help="How many best trials to print.")
+    parser.add_argument("--burst-weight", type=float, default=0.05)
+    parser.add_argument("--segments-weight", type=float, default=1.0)
+    parser.add_argument("--synapses-weight", type=float, default=0.05)
+    parser.add_argument(
+        "--min-duty-nonzero-share",
+        type=float,
+        default=0.1,
+        help=(
+            "Minimum share of columns/cells with duty_cycle > 0. "
+            "If BOTH column and cell shares are below this threshold, the trial is invalid."
+        ),
+    )
+    parser.add_argument(
+        "--invalid-penalty",
+        type=float,
+        default=1_000.0,
+        help="Penalty added to the score for invalid trials.",
+    )
     return parser.parse_args()
 
 
@@ -243,28 +350,40 @@ def main() -> None:
         * len(args.max_synapse_pcts)
         * len(args.activation_threshold_pcts)
         * len(args.learning_threshold_pcts)
+        * len(args.predicted_decrement_pcts)
+        * len(args.receptive_field_pcts)
     )
 
     for params in tqdm(generate_param_grid(args), total=total_trials, desc="Parameter sweep"):
-        trials.append(evaluate_trial(params, config, sine_values))
+        trials.append(
+            evaluate_trial(
+                params,
+                config,
+                sine_values,
+                burst_weight=args.burst_weight,
+                segments_weight=args.segments_weight,
+                synapses_weight=args.synapses_weight,
+                min_nonzero_duty_share=args.min_duty_nonzero_share,
+                invalid_penalty=args.invalid_penalty,
+            )
+        )
 
-    trials.sort(key=lambda trial: trial.score)
+    trials.sort(key=lambda trial: float(trial.metrics["score"]))
     best_trials = trials[: args.top_k]
 
     summary = {
         "config": asdict(config),
+        "weights": {
+            "burst_weight": args.burst_weight,
+            "segments_weight": args.segments_weight,
+            "synapses_weight": args.synapses_weight,
+            "min_duty_nonzero_share": args.min_duty_nonzero_share,
+            "invalid_penalty": args.invalid_penalty,
+        },
         "results": [
             {
-                "params": asdict(trial.params),
-                "metrics": {
-                    "mean_abs_error": trial.mean_abs_error,
-                    "max_abs_error": trial.max_abs_error,
-                    "prediction_failures": trial.prediction_failures,
-                    "avg_eval_bursting_columns": trial.avg_eval_bursting_columns,
-                    "train_max_initial_burst": trial.train_max_initial_burst,
-                    "train_final_burst": trial.train_final_burst,
-                    "score": trial.score,
-                },
+                "params": trial.params,
+                "metrics": trial.metrics,
             }
             for trial in trials
         ],
@@ -277,13 +396,8 @@ def main() -> None:
     for trial in best_trials:
         print(json.dumps(
             {
-                "params": asdict(trial.params),
-                "mean_abs_error": trial.mean_abs_error,
-                "max_abs_error": trial.max_abs_error,
-                "prediction_failures": trial.prediction_failures,
-                "avg_eval_bursting_columns": trial.avg_eval_bursting_columns,
-                "train_final_burst": trial.train_final_burst,
-                "score": trial.score,
+                "params": trial.params,
+                "metrics": trial.metrics,
             },
             indent=2,
         ))

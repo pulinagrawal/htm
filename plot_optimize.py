@@ -6,7 +6,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,19 +14,31 @@ import numpy as np
 
 @dataclass(frozen=True)
 class TrialRecord:
-    """Flattened representation of optimizer trial metrics."""
+    """Generic representation of optimizer trial outputs."""
 
-    growth_strength: float
-    max_synapse_pct: float
-    activation_threshold_pct: float
-    learning_threshold_pct: float
-    mean_abs_error: float
-    max_abs_error: float
-    prediction_failures: int
-    avg_eval_bursting_columns: float
-    train_max_initial_burst: int
-    train_final_burst: int
-    score: float
+    params: dict[str, Any]
+    metrics: dict[str, Any]
+
+    @property
+    def score(self) -> float:
+        return float(self.metrics.get("score", float("inf")))
+
+    @property
+    def mean_abs_error(self) -> float:
+        return float(self.metrics.get("mean_abs_error", float("inf")))
+
+    @property
+    def prediction_failures(self) -> int:
+        return int(self.metrics.get("prediction_failures", 0))
+
+    @property
+    def avg_eval_bursting_columns(self) -> float:
+        return float(self.metrics.get("avg_eval_bursting_columns", 0.0))
+
+    @property
+    def valid(self) -> bool:
+        value = self.metrics.get("valid", True)
+        return bool(value)
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,6 +63,11 @@ def parse_args() -> argparse.Namespace:
         default=200,
         help="Dots-per-inch used when saving PNG figures.",
     )
+    parser.add_argument(
+        "--include-invalid",
+        action="store_true",
+        help="Include trials marked as invalid in the plots.",
+    )
     return parser.parse_args()
 
 
@@ -58,26 +75,51 @@ def load_trials(results_path: Path) -> list[TrialRecord]:
     payload = json.loads(results_path.read_text())
     trials: list[TrialRecord] = []
     for entry in payload.get("results", []):
-        params = entry["params"]
-        metrics = entry["metrics"]
-        trials.append(
-            TrialRecord(
-                growth_strength=params["growth_strength"],
-                max_synapse_pct=params["max_synapse_pct"],
-                activation_threshold_pct=params["activation_threshold_pct"],
-                learning_threshold_pct=params["learning_threshold_pct"],
-                mean_abs_error=metrics["mean_abs_error"],
-                max_abs_error=metrics["max_abs_error"],
-                prediction_failures=metrics["prediction_failures"],
-                avg_eval_bursting_columns=metrics["avg_eval_bursting_columns"],
-                train_max_initial_burst=metrics["train_max_initial_burst"],
-                train_final_burst=metrics["train_final_burst"],
-                score=metrics["score"],
-            )
-        )
+        params = dict(entry.get("params", {}))
+        metrics = dict(entry.get("metrics", {}))
+        if params and metrics:
+            trials.append(TrialRecord(params=params, metrics=metrics))
+
     if not trials:
         raise ValueError(f"No trial entries found in {results_path}")
     return trials
+
+
+def numeric_param_values(records: Sequence[TrialRecord], key: str) -> list[float]:
+    values: list[float] = []
+    for rec in records:
+        if key not in rec.params:
+            continue
+        value = rec.params[key]
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    return values
+
+
+def varying_param_keys(records: Sequence[TrialRecord]) -> list[str]:
+    keys: set[str] = set()
+    for rec in records:
+        keys.update(rec.params.keys())
+    varying: list[str] = []
+    for key in sorted(keys):
+        values = numeric_param_values(records, key)
+        unique = {value for value in values}
+        if len(unique) > 1:
+            varying.append(key)
+    return varying
+
+
+def title_from_key(key: str) -> str:
+    return key.replace("_", " ")
+
+
+def param_as_float(record: TrialRecord, key: str) -> float | None:
+    if key not in record.params:
+        return None
+    value = record.params.get(key)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
 
 
 def plot_error_vs_score(records: Sequence[TrialRecord], output_dir: Path, dpi: int) -> None:
@@ -121,61 +163,85 @@ def plot_error_vs_score(records: Sequence[TrialRecord], output_dir: Path, dpi: i
 
 
 def plot_param_sensitivity(records: Sequence[TrialRecord], output_dir: Path, dpi: int) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharey=True)
-    param_specs = [
-        ("growth_strength", "Growth strength"),
-        ("max_synapse_pct", "Max synapse %"),
-        ("activation_threshold_pct", "Activation threshold %"),
-        ("learning_threshold_pct", "Learning threshold %"),
-    ]
+    varying = varying_param_keys(records)
+    if not varying:
+        return
 
     y_values = np.array([rec.mean_abs_error for rec in records])
+    panels_per_fig = 4
 
-    for ax, (attr, label) in zip(axes.flat, param_specs):
-        x_values = np.array([getattr(rec, attr) for rec in records])
-        ax.scatter(x_values, y_values, alpha=0.3, color="#4c72b0", label="Trials")
-        unique_levels = sorted(set(x_values))
-        aggregated = []
-        for level in unique_levels:
-            mask = x_values == level
-            aggregated.append((level, float(np.mean(y_values[mask]))))
-        ax.plot(
-            [level for level, _ in aggregated],
-            [avg for _, avg in aggregated],
-            color="#dd8452",
-            marker="o",
-            label="Mean error",
-        )
-        ax.set_xlabel(label)
-        ax.grid(True, linestyle=":", alpha=0.4)
+    for figure_idx in range(0, len(varying), panels_per_fig):
+        subset = varying[figure_idx : figure_idx + panels_per_fig]
+        fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharey=True)
+        axes_flat = list(axes.flat)
 
-    axes[0][0].set_ylabel("Mean absolute prediction error")
-    axes[1][0].set_ylabel("Mean absolute prediction error")
-    axes[0][0].legend()
-    fig.suptitle("Parameter sensitivity")
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(output_dir / "parameter_sensitivity.png", dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
+        for ax in axes_flat[len(subset) :]:
+            ax.axis("off")
+
+        for ax, key in zip(axes_flat, subset):
+            x_values = np.array(numeric_param_values(records, key), dtype=float)
+            if len(x_values) != len(records):
+                x_values = np.array([float(rec.params.get(key, np.nan)) for rec in records], dtype=float)
+
+            ax.scatter(x_values, y_values, alpha=0.3, color="#4c72b0", label="Trials")
+            unique_levels = sorted({float(v) for v in x_values if not np.isnan(v)})
+            aggregated: list[tuple[float, float]] = []
+            for level in unique_levels:
+                mask = x_values == level
+                if not np.any(mask):
+                    continue
+                aggregated.append((level, float(np.mean(y_values[mask]))))
+            if aggregated:
+                ax.plot(
+                    [level for level, _ in aggregated],
+                    [avg for _, avg in aggregated],
+                    color="#dd8452",
+                    marker="o",
+                    label="Mean error",
+                )
+            ax.set_xlabel(title_from_key(key))
+            ax.grid(True, linestyle=":", alpha=0.4)
+
+        axes[0][0].set_ylabel("Mean absolute prediction error")
+        axes[1][0].set_ylabel("Mean absolute prediction error")
+        axes[0][0].legend()
+        fig.suptitle("Parameter sensitivity")
+        fig.tight_layout(rect=(0, 0, 1, 0.97))
+        suffix = 1 + figure_idx // panels_per_fig
+        filename = "parameter_sensitivity.png" if len(varying) <= panels_per_fig else f"parameter_sensitivity_{suffix}.png"
+        fig.savefig(output_dir / filename, dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
 
 
 def plot_activation_learning_heatmap(records: Sequence[TrialRecord], output_dir: Path, dpi: int) -> None:
-    activation_levels = sorted({rec.activation_threshold_pct for rec in records})
-    learning_levels = sorted({rec.learning_threshold_pct for rec in records})
+    activation_key = "activation_threshold_pct"
+    learning_key = "learning_threshold_pct"
+    activation_levels = sorted(
+        {
+            value
+            for rec in records
+            if (value := param_as_float(rec, activation_key)) is not None
+        }
+    )
+    learning_levels = sorted(
+        {value for rec in records if (value := param_as_float(rec, learning_key)) is not None}
+    )
     if len(activation_levels) < 2 or len(learning_levels) < 2:
         return
 
-    lookup = {
-        (rec.activation_threshold_pct, rec.learning_threshold_pct): rec
-        for rec in records
-    }
     heatmap = np.empty((len(activation_levels), len(learning_levels)))
     for i, activation in enumerate(activation_levels):
         for j, learning in enumerate(learning_levels):
-            record = lookup.get((activation, learning))
-            if record is None:
+            matching = [
+                rec
+                for rec in records
+                if param_as_float(rec, activation_key) == activation
+                and param_as_float(rec, learning_key) == learning
+            ]
+            if not matching:
                 heatmap[i, j] = np.nan
-            else:
-                heatmap[i, j] = record.mean_abs_error
+                continue
+            heatmap[i, j] = float(np.mean([rec.mean_abs_error for rec in matching]))
 
     fig, ax = plt.subplots(figsize=(7, 5))
     mesh = ax.imshow(
@@ -201,6 +267,10 @@ def plot_activation_learning_heatmap(records: Sequence[TrialRecord], output_dir:
 def main() -> None:
     args = parse_args()
     records = load_trials(args.results)
+    if not args.include_invalid:
+        records = [rec for rec in records if rec.valid]
+    if not records:
+        raise ValueError("No trials available to plot after filtering.")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     plot_error_vs_score(records, args.output_dir, args.dpi)

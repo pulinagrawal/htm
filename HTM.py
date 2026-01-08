@@ -10,8 +10,6 @@ from typing import (
 
 from statistics import fmean, pstdev
 
-from attr import has
-
 from rdse import RDSEParameters, RandomDistributedScalarEncoder
 
 # Constants
@@ -438,11 +436,11 @@ class ColumnField(Field):
     def depolarize_cells(self) -> None:
         for column in self.columns:
             for segment in column.segments:
-                if segment.is_active():
-                    segment.set_active()
-                    segment.parent_cell.set_predictive()
                 if segment.is_potentially_active():
                     segment.set_matching()
+                    if segment.is_active():
+                        segment.set_active()
+                        segment.parent_cell.set_predictive()
 
     def learn(self) -> None:
         for column in self.active_columns:
@@ -589,8 +587,6 @@ class ColumnField(Field):
         print(
             f"  Cells with duty > 0: {active_cells}/{len(self.cells)} ({cell_share:.1%})"
         )
-
-    tp = TemporalPooler(input_space_size, column_count, cells_per_column, initial_synapses_per_column)
 
 class InputField(Field, RandomDistributedScalarEncoder):
     """A Field specialized for input bits."""
