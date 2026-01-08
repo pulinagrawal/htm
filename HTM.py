@@ -345,6 +345,9 @@ class ColumnField(Field):
         self.duty_cycle_period = max(1, duty_cycle_period)
         self._duty_cycle_window = 0
 
+    def __iter__(self):
+        return iter(self.columns)
+
     @property
     def bursting_columns(self) -> List[Column]:
         """Return list of currently bursting columns."""
@@ -431,6 +434,15 @@ class ColumnField(Field):
 
                 winner_cell.set_winner()              # Same as 2) L37
                 learning_segment.set_learning()      # Same as 1) L39
+    
+    def depolarize_cells(self) -> None:
+        for column in self.columns:
+            for segment in column.segments:
+                if segment.is_active():
+                    segment.set_active()
+                    segment.parent_cell.set_predictive()
+                if segment.is_potentially_active():
+                    segment.set_matching()
 
     def learn(self) -> None:
         for column in self.active_columns:
@@ -450,15 +462,6 @@ class ColumnField(Field):
                 for segment in column.segments:
                     if segment.matching:
                         segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
-    
-    def depolarize_cells(self) -> None:
-        for column in self.columns:
-            for segment in column.segments:
-                if segment.is_active():
-                    segment.set_active()
-                    segment.parent_cell.set_predictive()
-                if segment.is_potentially_active():
-                    segment.set_matching()
 
     def get_prediction(self) -> List[Field]:
         """Return column-level predictive state and update source fields."""
