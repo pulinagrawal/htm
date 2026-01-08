@@ -43,6 +43,7 @@ from visualizer.interactive import (
     describe_segment_synapses,
     sine_value_generator,
 )
+from visualizer.renderer3d import render_column_field_3d
 from visualizer.simulator import SimulationConfig, SimulationResult, run_simulation
 
 st.set_page_config(page_title="HTM ColumnField Visualizer", layout="wide")
@@ -264,6 +265,29 @@ def _render_interactive_explorer(config: SimulationConfig) -> None:
         help="Controls the heatmap layout for the column state overview.",
     )
     _render_column_heatmap(ctx.column_field, grid_cols)
+
+    st.markdown("3D ColumnField explorer")
+    synapse_controls = st.columns(2)
+    show_connected = synapse_controls[0].toggle(
+        "Show only connected synapses",
+        value=True,
+        help="Filter synapses to those at or above the connected permanence threshold.",
+    )
+    permanence_threshold = synapse_controls[1].slider(
+        "Synapse permanence threshold",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.0,
+        step=0.05,
+        help="Hide synapses below this permanence value.",
+    )
+    fig_3d = render_column_field_3d(
+        ctx.column_field,
+        columns_per_row=grid_cols,
+        show_only_connected_synapses=show_connected,
+        permanence_threshold=permanence_threshold,
+    )
+    st.plotly_chart(fig_3d, use_container_width=True)
 
     column_count = len(ctx.column_field.columns)
     inspect_cols = st.columns(2)
