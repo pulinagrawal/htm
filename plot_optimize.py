@@ -6,6 +6,7 @@ import argparse
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import mean
 from typing import Any, Sequence
 
 import matplotlib.pyplot as plt
@@ -37,19 +38,25 @@ class TrialRecord:
 
     @property
     def valid(self) -> bool:
-        value = self.metrics.get("valid", True)
+        value = self.metrics.get("valid", self.metrics.get("passes", True))
         return bool(value)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render diagnostic plots for prediction_error_results.json outputs."
+        description=(
+            "Render diagnostic plots and/or print summaries for optimizer JSON outputs. "
+            "Supports both prediction_error_results*.json (params/metrics) and "
+            "hyperparam_search_results.json (config/metrics)."
+        )
     )
     parser.add_argument(
         "--results",
         type=Path,
-        default=Path("./prediction_error_results_20260107_005418.json"),
-        help="Path to the JSON file emitted by optimize_prediction_error.py.",
+        default=Path("./prediction_error_results_20260108_124344.json"),
+        help=(
+            "Path to the JSON file emitted by optimize_prediction_error.py or hyperparameter search."
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -68,6 +75,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Include trials marked as invalid in the plots.",
     )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=50,
+        help="Number of top trials to show in the printed table.",
+    )
     return parser.parse_args()
 
 
@@ -75,7 +88,7 @@ def load_trials(results_path: Path) -> list[TrialRecord]:
     payload = json.loads(results_path.read_text())
     trials: list[TrialRecord] = []
     for entry in payload.get("results", []):
-        params = dict(entry.get("params", {}))
+        params = dict(entry.get("params", entry.get("config", {})))
         metrics = dict(entry.get("metrics", {}))
         if params and metrics:
             trials.append(TrialRecord(params=params, metrics=metrics))
@@ -83,6 +96,163 @@ def load_trials(results_path: Path) -> list[TrialRecord]:
     if not trials:
         raise ValueError(f"No trial entries found in {results_path}")
     return trials
+
+
+def _format_scalar(value: Any) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not np.isfinite(value):
+            return "inf"
+        return f"{value:.6g}"
+    return str(value)
+
+
+def _format_json_block(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def _select_metric_keys(records: Sequence[TrialRecord]) -> list[str]:
+    # Prefer commonly used metrics, but only show keys that appear.
+    preferred = [
+        "valid",
+        "passes",
+        "mean_abs_error",
+        "prediction_failures",
+        "avg_eval_bursting_columns",
+        "evaluation_burst_sum",
+        "final_burst",
+        "max_initial_bursts",
+    ]
+    available: set[str] = set()
+    for rec in records:
+        available.update(rec.metrics.keys())
+    available.discard("score")
+    selected = [key for key in preferred if key in available]
+
+    # Keep the printed table compact; the full best-trial metrics are printed above.
+    remaining = [key for key in sorted(available) if key not in selected]
+    while len(selected) < 6 and remaining:
+        selected.append(remaining.pop(0))
+    return selected
+
+
+def _load_config(results_path: Path) -> dict[str, Any]:
+    payload = json.loads(results_path.read_text())
+    config = payload.get("config", {})
+    if isinstance(config, dict):
+        return dict(config)
+    return {}
+
+
+def _total_cells_from_config(config: dict[str, Any]) -> int | None:
+    try:
+        num_columns = int(config.get("num_columns"))
+        cells_per_column = int(config.get("cells_per_column"))
+    except (TypeError, ValueError):
+        return None
+    if num_columns <= 0 or cells_per_column <= 0:
+        return None
+    return num_columns * cells_per_column
+
+
+def _segments_per_cell(record: TrialRecord, total_cells: int | None) -> float | None:
+    if total_cells is None:
+        return None
+    if "total_segments" not in record.metrics:
+        return None
+    try:
+        total_segments = float(record.metrics["total_segments"])
+    except (TypeError, ValueError):
+        return None
+    if total_cells <= 0:
+        return None
+    return total_segments / total_cells
+
+
+def _synapses_per_segment(record: TrialRecord) -> float | None:
+    if "total_segments" not in record.metrics or "total_synapses" not in record.metrics:
+        return None
+    try:
+        total_segments = float(record.metrics["total_segments"])
+        total_synapses = float(record.metrics["total_synapses"])
+    except (TypeError, ValueError):
+        return None
+    if total_segments <= 0:
+        return 0.0
+    return total_synapses / total_segments
+
+
+def pretty_print_trials(records: Sequence[TrialRecord], results_path: Path, top_n: int) -> None:
+    sorted_records = sorted(records, key=lambda rec: rec.mean_abs_error)
+    metric_keys = _select_metric_keys(sorted_records)
+
+    config = _load_config(results_path)
+    total_cells = _total_cells_from_config(config)
+    include_segments_per_cell = total_cells is not None and any(
+        "total_segments" in rec.metrics for rec in sorted_records
+    )
+    include_synapses_per_segment = any(
+        "total_segments" in rec.metrics and "total_synapses" in rec.metrics
+        for rec in sorted_records
+    )
+
+    invalid_count = sum(1 for rec in sorted_records if not rec.valid)
+    scores = [rec.score for rec in sorted_records if np.isfinite(rec.score)]
+    best = sorted_records[0]
+
+    print(f"Results: {results_path}")
+    print(f"Trials: {len(sorted_records)} (invalid: {invalid_count})")
+    if scores:
+        print(
+            "Score: "
+            f"best={min(scores):.6g}  mean={mean(scores):.6g}  worst={max(scores):.6g}"
+        )
+    print()
+    print("Best trial")
+    print("Metrics:")
+    print(_format_json_block(best.metrics))
+    print("Config:")
+    print(_format_json_block(best.params))
+    print()
+
+    show_n = max(1, min(top_n, len(sorted_records)))
+    headers = ["rank", "score"]
+    if include_segments_per_cell:
+        headers.append("segments_per_cell")
+    if include_synapses_per_segment:
+        headers.append("synapses_per_segment")
+    headers.extend([*metric_keys, "key_params"])
+    rows: list[list[str]] = []
+    for idx, rec in enumerate(sorted_records[:show_n], start=1):
+        row: list[str] = [str(idx), _format_scalar(rec.score)]
+        if include_segments_per_cell:
+            row.append(_format_scalar(_segments_per_cell(rec, total_cells)))
+        if include_synapses_per_segment:
+            row.append(_format_scalar(_synapses_per_segment(rec)))
+        for key in metric_keys:
+            row.append(_format_scalar(rec.metrics.get(key)))
+        # Keep this compact: show only params that vary across trials.
+        row.append(", ".join(f"{k}={_format_scalar(rec.params.get(k))}" for k in varying_param_keys(sorted_records)[:3]))
+        rows.append(row)
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for col_idx, value in enumerate(row):
+            widths[col_idx] = max(widths[col_idx], len(value))
+
+    def emit(row: list[str]) -> None:
+        print("  ".join(value.ljust(widths[i]) for i, value in enumerate(row)))
+
+    print(f"Top {show_n} trials")
+    emit(headers)
+    emit(["-" * w for w in widths])
+    for row in rows:
+        emit(row)
 
 
 def numeric_param_values(records: Sequence[TrialRecord], key: str) -> list[float]:
@@ -267,15 +437,23 @@ def plot_activation_learning_heatmap(records: Sequence[TrialRecord], output_dir:
 def main() -> None:
     args = parse_args()
     records = load_trials(args.results)
-    if not args.include_invalid:
-        records = [rec for rec in records if rec.valid]
-    if not records:
-        raise ValueError("No trials available to plot after filtering.")
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    pretty_print_trials(records, args.results, args.top_n)
 
-    plot_error_vs_score(records, args.output_dir, args.dpi)
-    plot_param_sensitivity(records, args.output_dir, args.dpi)
-    plot_activation_learning_heatmap(records, args.output_dir, args.dpi)
+    plot_records = records
+    if not args.include_invalid:
+        plot_records = [rec for rec in plot_records if rec.valid]
+    if not plot_records:
+        raise ValueError("No trials available to plot after filtering.")
+
+    has_finite_errors = any(np.isfinite(rec.mean_abs_error) for rec in plot_records)
+    if not has_finite_errors:
+        print("Skipping plots: mean_abs_error not present in results.")
+        return
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    plot_error_vs_score(plot_records, args.output_dir, args.dpi)
+    plot_param_sensitivity(plot_records, args.output_dir, args.dpi)
+    plot_activation_learning_heatmap(plot_records, args.output_dir, args.dpi)
     print(f"Saved plots to {args.output_dir.resolve()}")
 
 

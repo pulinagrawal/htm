@@ -48,14 +48,15 @@ class TestRealData(unittest.TestCase):
             column_field.compute()
             burst_counts.append(len(column_field.bursting_columns))
 
+        print("Burst counts over time:", burst_counts)
+        column_field.print_stats()
+
         self.assertGreater(
             max(burst_counts[:10]),
             0,
             "Column field should burst before learning the sine-driven sequence.",
         )
-        print("Burst counts over time:", burst_counts)
 
-        column_field.print_stats()
         self.assertEqual(
             burst_counts[-1],
             0,

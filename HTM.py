@@ -16,9 +16,9 @@ from rdse import RDSEParameters, RandomDistributedScalarEncoder
 CONNECTED_PERM = 0.5  # Permanence threshold for a synapse to be considered connected
 DESIRED_LOCAL_SPARSITY = 0.02  # Desired local sparsity for inhibition
 INITIAL_PERMANENCE = 0.21  # Initial permanence for new synapses
-PERMANENCE_INC = 0.10  # Amount by which synapses are incremented during learning
+PERMANENCE_INC = 0.20  # Amount by which synapses are incremented during learning
 PERMANENCE_DEC = 0.10  # Amount by which synapses are decremented during learning
-PREDICTED_DECREMENT_PCT = 0.5  # Fraction of permanence decrement for predicted but inactive segments
+PREDICTED_DECREMENT_PCT = 0.9  # Fraction of permanence decrement for predicted but inactive segments
 GROWTH_STRENGTH = 0.1  # Fraction of max synapses to grow on a segment during learning
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
@@ -26,7 +26,7 @@ MAX_SYNAPSE_PCT = 0.02  # Max synapses as a percentage of distal field size
 ACTIVATION_THRESHOLD_PCT = 0.8  # Activation threshold as a percentage of synapses on segment   
 LEARNING_THRESHOLD_PCT = 0.7  # Learning threshold as a percentage of synapses on segment
 
-debug = True
+debug = False
 
 def make_state_class(label: str):
     """Create a mixin that tracks current and previous boolean states for `label`."""
@@ -65,50 +65,50 @@ Learning = make_state_class("learning")
 Matching = make_state_class("matching")
 
 class Field:
-  """A collection of cells."""
-  def __init__(self, cells: Iterable['Cell']) -> None:
-      self.cells: List['Cell'] = list(cells)
+    """A collection of cells."""
+    def __init__(self, cells: Iterable['Cell']) -> None:
+        self.cells: List['Cell'] = list(cells)
 
-  def __iter__(self):
-      return iter(self.cells)
+    def __iter__(self):
+        return iter(self.cells)
+
+    def sample(self, pct: float) -> Set['Cell']:
+        """Sample 'pct' percent cells from the field."""
+        n = int(len(self.cells) * pct)
+        if n > len(self.cells):
+            raise ValueError("Cannot sample more cells than are in the field.")
+        return set(random.sample(self.cells, n))
+
+    @property
+    def active_cells(self) -> Set['Cell']:
+        """Return set of previously active cells in the field."""
+        return {cell for cell in self.cells if cell.active}
+
+    @property
+    def prev_active_cells(self) -> Set['Cell']:
+        """Return set of previously active cells in the field."""
+        return {cell for cell in self.cells if cell.prev_active}
+
+    @property
+    def predictive_cells(self) -> Set['Cell']:
+        """Return set of previously active cells in the field."""
+        return {cell for cell in self.cells if cell.predictive}
+
+    @property
+    def prev_predictive_cells(self) -> Set['Cell']:
+        """Return set of previously predictive cells in the field."""
+        return {cell for cell in self.cells if cell.prev_predictive}
+
+    @property
+    def prev_learning_cells(self) -> Set['Cell']:
+        """Return set of previously learning cells in the field."""
+        return {cell for cell in self.cells if cell.prev_learning}
+
+    @property
+    def prev_winner_cells(self) -> Set['Cell']:
+        """Return set of previously winning cells in the field."""
+        return {cell for cell in self.cells if cell.prev_winner}
   
-  def sample(self, pct: float) -> Set['Cell']:
-      """Sample 'pct' percent cells from the field."""
-      n = int(len(self.cells) * pct)
-      if n > len(self.cells):
-          raise ValueError("Cannot sample more cells than are in the field.")
-      return set(random.sample(list(self.cells), n))
-
-  @property
-  def active_cells(self) -> Set['Cell']:
-      """Return set of previously active cells in the field."""
-      return {cell for cell in self.cells if cell.active}
-
-  @property
-  def prev_active_cells(self) -> Set['Cell']:
-      """Return set of previously active cells in the field."""
-      return {cell for cell in self.cells if cell.prev_active}
-
-  @property
-  def predictive_cells(self) -> Set['Cell']:
-      """Return set of previously active cells in the field."""
-      return {cell for cell in self.cells if cell.predictive}
-
-  @property
-  def prev_predictive_cells(self) -> Set['Cell']:
-      """Return set of previously predictive cells in the field."""
-      return {cell for cell in self.cells if cell.prev_predictive}
-
-  @property
-  def prev_learning_cells(self) -> Set['Cell']:
-      """Return set of previously learning cells in the field."""
-      return {cell for cell in self.cells if cell.prev_learning}
-
-  @property
-  def prev_winner_cells(self) -> Set['Cell']:
-      """Return set of previously winning cells in the field."""
-      return {cell for cell in self.cells if cell.prev_winner}
-
 # ===== Basic Building Blocks =====
 
 class Synapse:
@@ -170,38 +170,47 @@ class Segment(Active, Learning, Matching):
         return [syn for syn in self.synapses if syn.source_cell.prev_active]
 
     def clear_state(self) -> None:
-        for cls in Segment.__mro__:
-            if hasattr(cls, "clear_state") and cls not in (Segment, object):
-                cls.clear_state(self)
-        for synapse in self.synapses:
-            pass  # Synapses do not have state to clear
+        self.prev_active = self.active
+        self.active = False
+
+        self.prev_learning = self.learning
+        self.learning = False
+
+        self.prev_matching = self.matching
+        self.matching = False
 
     def adapt(self, strength:float=1.0) -> None:
         # Strengthen synapses to previously active cells
+        kept = []
         for syn in self.synapses:
             syn._adjust_permanence(increase=syn.source_cell.prev_active, strength=strength)
-            if syn.permanence == 0.0:
-                self.synapses.remove(syn)
+            if syn.permanence > 0.0:
+                kept.append(syn)
+        self.synapses = kept
 
     def grow(self, strength:float=1.0) -> None:
         """Grow new synapses to random cells in the distal field."""
-        potential_cells = list(self.parent_cell.distal_field.prev_winner_cells - {syn.source_cell for syn in self.synapses} - {self.parent_cell})
-        random.shuffle(potential_cells)
-        available_synapses = self.max_synapses - len(self.synapses)
-        cells_to_connect = potential_cells[:int(available_synapses * GROWTH_STRENGTH * strength)]
-        
-        for cell in cells_to_connect:
-            new_syn = DistalSynapse(source_cell=cell, permanence=INITIAL_PERMANENCE)
-            self.synapses.append(new_syn)
+        growable_synapses = int((self.max_synapses - len(self.synapses))*GROWTH_STRENGTH*strength)
+        if growable_synapses > 0: 
+            potential_cells = list(self.parent_cell.distal_field.prev_winner_cells - {syn.source_cell for syn in self.synapses} - {self.parent_cell})
+            random.shuffle(potential_cells)
+            cells_to_connect = potential_cells[:growable_synapses]
+            for cell in cells_to_connect:
+                new_syn = DistalSynapse(source_cell=cell, permanence=INITIAL_PERMANENCE)
+                self.synapses.append(new_syn)
 
     def weaken(self, strength=1.0) -> None:
         # Weaken synapses to active cells
+        # add synpase deletion
+        kept = []
         for syn in self.synapses:
             syn._adjust_permanence(increase=False, strength=strength)
-            if syn.permanence == 0.0:
-                self.synapses.remove(syn)
+            if syn.permanence > 0.0:
+                kept.append(syn)
+        self.synapses = kept
 
-class Cell(Active, Winner, Predictive, Learning):
+
+class Cell(Active, Winner, Predictive):
     """Single cell within a column or layer.
     
     Holds a (possibly empty) list of distal segments used for temporal learning.
@@ -225,9 +234,15 @@ class Cell(Active, Winner, Predictive, Learning):
         return f"Cell(id={id(self)})"
 
     def clear_state(self) -> None:
-        for cls in Cell.__mro__:
-            if hasattr(cls, "clear_state") and cls not in (Cell, object):
-                cls.clear_state(self)
+        self.prev_active = self.active
+        self.active = False
+
+        self.prev_winner = self.winner
+        self.winner = False
+
+        self.prev_predictive = self.predictive
+        self.predictive = False
+
         for segment in self.segments:
             segment.clear_state()
         
@@ -267,9 +282,15 @@ class Column(Active, Predictive, Bursting):
         return random.choice([cell for cell in self.cells if len(cell.segments) == min_segments])
     
     def clear_state(self) -> None:
-        for cls in Column.__mro__:
-            if hasattr(cls, "clear_state") and cls not in (Column, object):
-                cls.clear_state(self)
+        self.prev_active = self.active
+        self.active = False
+
+        self.prev_bursting = self.bursting
+        self.bursting = False
+
+        self.prev_predictive = self.predictive
+        self.predictive = False
+
         for cell in self.cells:
             cell.clear_state()
 
@@ -339,9 +360,10 @@ class ColumnField(Field):
         super().__init__(chain.from_iterable(column.cells for column in self.columns))
         for column in self.columns:
             for cell in column.cells:
-              cell.initialize(distal_field=Field(set(self.cells)-{cell}))
+              cell.initialize(distal_field=self)
         self.duty_cycle_period = max(1, duty_cycle_period)
         self._duty_cycle_window = 0
+        self._prev_winner_cells: Set[Cell] = set()
 
     def __iter__(self):
         return iter(self.columns)
@@ -355,14 +377,19 @@ class ColumnField(Field):
     def active_columns(self) -> List[Column]:
         """Return list of currently bursting columns."""
         return [column for column in self.columns if column.active]
+
+    @property
+    def prev_winner_cells(self) -> Set[Cell]:
+        """Return set of previously winning cells in the field."""
+        return self._prev_winner_cells
     
     def clear_states(self) -> None:
-        self.active_columns.clear()
         for cls in ColumnField.__mro__:
             if hasattr(cls, "clear_state") and cls not in (ColumnField, object):
                 cls.clear_state(self)
         for column in self.columns:
             column.clear_state()
+        self._prev_winner_cells = set(cell for cell in self.cells if cell.prev_winner)
 
     def compute(self, learn=True) -> None:
         self.clear_states()
@@ -444,16 +471,17 @@ class ColumnField(Field):
 
     def learn(self) -> None:
         for column in self.active_columns:
-            for segment in column.segments:
-                if segment.learning:
-                    segment.adapt()               # Same as 1) L16-20
-                    segment.grow()               # Same as 1) L22-24
+            if not column.bursting:
+                for segment in column.segments:
+                    if segment.learning:
+                        segment.grow()               # Same as 1) L22-24
+                        segment.adapt()               # Same as 1) L16-20
         
         for column in self.bursting_columns:
             for segment in column.segments:
                 if segment.learning:               # Same as 1) L40-48
-                    segment.adapt()               
                     segment.grow()               
+                    segment.adapt(strength=5.0)          # Same as 1) L42-44 
 
         for column in self.columns:
             if not column.active:

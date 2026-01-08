@@ -34,7 +34,7 @@ from rdse import RDSEParameters, RandomDistributedScalarEncoder
 class SineConfig:
     """Replica of the configuration used by test_sine_wave_bursting_columns_converge."""
 
-    num_columns: int = 1024
+    num_columns: int = 512
     cells_per_column: int = 16
     sparsity: float = 0.02
     resolution: float = 0.001
@@ -198,9 +198,9 @@ def evaluate_trial(
 
     score = (
         mean_abs_error
-        + burst_weight * avg_eval_bursting
-        + segments_weight * segments_per_cell
-        + synapses_weight * synapses_per_cell
+        - burst_weight * avg_eval_bursting
+        - segments_weight * segments_per_cell
+        - synapses_weight * synapses_per_cell
     )
     if not valid:
         score += invalid_penalty
@@ -252,22 +252,22 @@ def parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument("--growth-strengths", type=float, nargs="+", default=[0.9, 0.5, 0.1])
-    parser.add_argument("--max-synapse-pcts", type=float, nargs="+", default=[0.02])
-    parser.add_argument("--activation-threshold-pcts", type=float, nargs="+", default=[0.1, 0.5, 0.8])
-    parser.add_argument("--learning-threshold-pcts", type=float, nargs="+", default=[0.9, 0.5, 0.1])
+    parser.add_argument("--max-synapse-pcts", type=float, nargs="+", default=[0.008])
+    parser.add_argument("--activation-threshold-pcts", type=float, nargs="+", default=[.5, 0.8, 0.9])
+    parser.add_argument("--learning-threshold-pcts", type=float, nargs="+", default=[0.9, 0,7, 0.5])
     parser.add_argument(
         "--predicted-decrement-pcts",
         dest="predicted_decrement_pcts",
         type=float,
         nargs="+",
-        default=[0.9, 0.5, 0.1],
+        default=[0.1, 0.5, 0.9],
     )
     parser.add_argument(
         "--receptive-field-pcts",
         dest="receptive_field_pcts",
         type=float,
         nargs="+",
-        default=[0.9, 0.5, 0.1],
+        default=[0.1],
     )
     # Backwards-compat aliases
     parser.add_argument(
@@ -284,7 +284,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--num-columns", type=int, default=1024)
+    parser.add_argument("--num-columns", type=int, default=512)
     parser.add_argument("--cells-per-column", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=1_000)
     parser.add_argument("--cycle-length", type=int, default=64)
@@ -301,8 +301,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--top-k", type=int, default=3, help="How many best trials to print.")
     parser.add_argument("--burst-weight", type=float, default=0.05)
-    parser.add_argument("--segments-weight", type=float, default=1.0)
-    parser.add_argument("--synapses-weight", type=float, default=0.05)
+    parser.add_argument("--segments-weight", type=float, default=0.005)
+    parser.add_argument("--synapses-weight", type=float, default=0.0001)
     parser.add_argument(
         "--min-duty-nonzero-share",
         type=float,
