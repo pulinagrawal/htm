@@ -26,6 +26,12 @@ ENV/
 env/
 
 # IDE
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
 .vscode/
 .idea/
 *.swp
