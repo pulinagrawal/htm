@@ -14,7 +14,7 @@ class TestRealData(unittest.TestCase):
             "num_columns": 1024,
             "cells_per_column": 16,
             "sparsity": 0.02,
-            "resolution": 0.001,
+            "resolution": 0.0001,
             "cycle_length": 64,
             "rdse_seed": 5,
             "total_steps": 1000,
