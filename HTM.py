@@ -24,7 +24,7 @@ RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for 
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
 MAX_SYNAPSE_PCT = 0.02  # Max synapses as a percentage of distal field size
 ACTIVATION_THRESHOLD_PCT = 0.8  # Activation threshold as a percentage of synapses on segment   
-LEARNING_THRESHOLD_PCT = 0.7  # Learning threshold as a percentage of synapses on segment
+LEARNING_THRESHOLD_PCT = 0.4  # Learning threshold as a percentage of synapses on segment
 
 debug = False
 
@@ -270,6 +270,9 @@ class Column(Active, Predictive, Bursting):
             for _ in range(cells_per_column)
         ]
     
+    def __repr__(self) -> str:
+        return f"Column(id={id(self)})"
+
     @property
     def segments(self) -> List[Segment]:
         """Return all distal segments on all cells in this column."""
@@ -638,7 +641,7 @@ class InputField(Field, RandomDistributedScalarEncoder):
         """Convert active cells back to input value using RDSE decoding."""
         if state not in ('active', 'predictive'):
             raise ValueError(f"Invalid state '{state}'; must be 'active' or 'predictive'")
-        bit_vector = [getattr(cell, state)  for cell in self.cells]
+        bit_vector = [getattr(cell, state)  for cell in encoded]
         return super().decode(bit_vector, candidates)
     
     def clear_states(self) -> None:
