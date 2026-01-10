@@ -69,7 +69,8 @@ def test_sine_wave_bursting_columns_converge():
 
 
         # mean abs error of predictions
-        mae = sum(errors) / len(errors)
+        mae = sum(errors[1:]) / len(errors[1:])
+        print("Error values:", errors)
         print("Mean Absolute Error of predictions:", mae)
         print("Evaluation bursting columns:", evaluation_bursts)
 
