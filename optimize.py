@@ -88,15 +88,6 @@ def sine_cycle(length: int) -> np.ndarray:
     return np.sin(np.linspace(0.0, 2.0 * np.pi, length, endpoint=False))
 
 
-def decode_prediction(prediction_field: Field, encoder: InputField, candidates: Sequence[float]):
-    """Convert predictive column activity into a decoded scalar."""
-
-    bit_vector = [1 if getattr(cell, "predictive", False) else 0 for cell in prediction_field.cells]
-    if not any(bit_vector):
-        return None, 0.0
-    return RandomDistributedScalarEncoder.decode(encoder, bit_vector, candidates)
-
-
 def describe_structure(column_field: ColumnField) -> tuple[int, int, int]:
     """Return (total_segments, total_synapses, connected_synapses)."""
 
@@ -169,12 +160,12 @@ def evaluate_trial(
         for step in range(evaluation_steps):
             target_value = float(sine_values[step % config.cycle_length])
             prediction_field = column_field.get_prediction()[0]
-            predicted_value, _ = decode_prediction(prediction_field, input_field, sine_values)
+            predicted_value, _ = input_field.decode(prediction_field, 'predictive')
             if predicted_value is None:
                 prediction_failures += 1
                 abs_error = config.missing_prediction_penalty
             else:
-                abs_error = abs(predicted_value - target_value)
+                abs_error = abs(predicted_value - target_value)**2
             errors.append(abs_error)
             input_field.encode(target_value)
             column_field.compute(learn=False)
@@ -182,7 +173,7 @@ def evaluate_trial(
 
     mean_abs_error = float(np.mean(errors)) if errors else float("inf")
     max_abs_error = float(np.max(errors)) if errors else float("inf")
-    avg_eval_bursting = float(np.mean(evaluation_bursts)) if evaluation_bursts else 0.0
+    avg_eval_bursting = float(np.mean(evaluation_bursts[1:])) if evaluation_bursts else 0.0
 
     train_max_initial = int(max(train_bursts[: min(10, len(train_bursts))])) if train_bursts else 0
     train_final = int(train_bursts[-1]) if train_bursts else 0
@@ -254,7 +245,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--growth-strengths", type=float, nargs="+", default=[0.9, 0.5, 0.1])
     parser.add_argument("--max-synapse-pcts", type=float, nargs="+", default=[0.008])
     parser.add_argument("--activation-threshold-pcts", type=float, nargs="+", default=[.5, 0.8, 0.9])
-    parser.add_argument("--learning-threshold-pcts", type=float, nargs="+", default=[0.9, 0,7, 0.5])
+    parser.add_argument("--learning-threshold-pcts", type=float, nargs="+", default=[0.5])
     parser.add_argument(
         "--predicted-decrement-pcts",
         dest="predicted_decrement_pcts",

@@ -18,13 +18,13 @@ DESIRED_LOCAL_SPARSITY = 0.02  # Desired local sparsity for inhibition
 INITIAL_PERMANENCE = 0.21  # Initial permanence for new synapses
 PERMANENCE_INC = 0.20  # Amount by which synapses are incremented during learning
 PERMANENCE_DEC = 0.10  # Amount by which synapses are decremented during learning
-PREDICTED_DECREMENT_PCT = 0.9  # Fraction of permanence decrement for predicted but inactive segments
-GROWTH_STRENGTH = 0.1  # Fraction of max synapses to grow on a segment during learning
+PREDICTED_DECREMENT_PCT = 0.1  # Fraction of permanence decrement for predicted but inactive segments
+GROWTH_STRENGTH = 0.5  # Fraction of max synapses to grow on a segment during learning
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
 MAX_SYNAPSE_PCT = 0.02  # Max synapses as a percentage of distal field size
-ACTIVATION_THRESHOLD_PCT = 0.8  # Activation threshold as a percentage of synapses on segment   
-LEARNING_THRESHOLD_PCT = 0.4  # Learning threshold as a percentage of synapses on segment
+ACTIVATION_THRESHOLD_PCT = 0.5  # Activation threshold as a percentage of synapses on segment   
+LEARNING_THRESHOLD_PCT = 0.25  # Learning threshold as a percentage of synapses on segment
 
 debug = False
 
