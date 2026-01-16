@@ -7,8 +7,8 @@ import random
 
 import numpy as np
 
-from HTM import ColumnField, InputField
-from rdse import RandomDistributedScalarEncoder as RDSE, RDSEParameters
+from src.HTM import ColumnField, InputField
+from encoder_layer.rdse import RandomDistributedScalarEncoder as RDSE, RDSEParameters
 
 
 def test_sine_wave_bursting_columns_converge():
@@ -33,7 +33,7 @@ def test_sine_wave_bursting_columns_converge():
             category=False,
             seed=config["rdse_seed"],
         )
-        input_field = InputField(size=config["num_columns"], rdse_params=params)
+        input_field = InputField(size=config["num_columns"], encoder_params=params)
         column_field = ColumnField(
             input_fields=[input_field],
             non_spatial=True,

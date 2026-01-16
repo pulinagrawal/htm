@@ -25,9 +25,9 @@ from typing import Iterator, Sequence
 import numpy as np
 from tqdm import tqdm
 
-import HTM as bb
-from HTM import CONNECTED_PERM, ColumnField, Field, InputField
-from rdse import RDSEParameters, RandomDistributedScalarEncoder
+import src.HTM as bb
+from src.HTM import CONNECTED_PERM, ColumnField, Field, InputField
+from encoder_layer.rdse import RDSEParameters, RandomDistributedScalarEncoder
 
 
 @dataclass(frozen=True)
@@ -129,7 +129,7 @@ def evaluate_trial(
     )
 
     with override_tm_constants(params):
-        input_field = InputField(size=config.num_columns, rdse_params=rdse_params)
+        input_field = InputField(size=config.num_columns, encoder_params=rdse_params)
         column_field = ColumnField(
             input_fields=[input_field],
             non_spatial=True,

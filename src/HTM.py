@@ -1,6 +1,8 @@
 from itertools import chain
+import copy
 import random
 from typing import (
+    Any,
     Iterable,
     List,
     Set,
@@ -10,7 +12,8 @@ from typing import (
 
 from statistics import fmean, pstdev
 
-from rdse import RDSEParameters, RandomDistributedScalarEncoder
+from encoder_layer.base_encoder import BaseEncoder
+from encoder_layer.rdse import RDSEParameters, RandomDistributedScalarEncoder
 
 # Constants
 CONNECTED_PERM = 0.5  # Permanence threshold for a synapse to be considered connected
@@ -619,19 +622,21 @@ class ColumnField(Field):
             f"  Cells with duty > 0: {active_cells}/{len(self.cells)} ({cell_share:.1%})"
         )
 
-class InputField(Field, RandomDistributedScalarEncoder):
+class InputField(Field):
     """A Field specialized for input bits."""
-    def __init__(self, size, category=False, rdse_params: RDSEParameters=RDSEParameters()) -> None:
-        cells = {Cell() for _ in range(size)}
-        Field.__init__(self, cells)
-        rdse_params.size = size
-        rdse_params.category = category
-        RandomDistributedScalarEncoder.__init__(self, rdse_params)
 
-    def encode(self, input_value: float) -> List[int]:
+    def __init__(self, encoder_params: Any | None = None, size: int | None = None) -> None:
+        params = copy.deepcopy(encoder_params) if encoder_params is not None else RDSEParameters()
+        if size is not None and hasattr(params, "size"):
+            params.size = size
+        self.encoder = params.encoder_class(params)
+        cells = {Cell() for _ in range(self.encoder.size)}
+        Field.__init__(self, cells)
+
+    def encode(self, input_value: Any) -> List[int]:
         """Encode the input value into a binary vector."""
         self.clear_states()
-        encoded_bits = super().encode(input_value)
+        encoded_bits = self.encoder.encode(input_value)
         for idx, cell in enumerate(self.cells):
             if encoded_bits[idx]:
                 cell.set_active()
@@ -642,7 +647,7 @@ class InputField(Field, RandomDistributedScalarEncoder):
         if state not in ('active', 'predictive'):
             raise ValueError(f"Invalid state '{state}'; must be 'active' or 'predictive'")
         bit_vector = [getattr(cell, state)  for cell in encoded]
-        return super().decode(bit_vector, candidates)
+        return self.encoder.decode(bit_vector, candidates)
     
     def clear_states(self) -> None:
         for cell in self.cells:
