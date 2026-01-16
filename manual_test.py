@@ -7,7 +7,7 @@ import random
 
 import numpy as np
 
-from HTM import ColumnField, InputField
+from sungur import ColumnField, InputField
 from rdse import RandomDistributedScalarEncoder as RDSE, RDSEParameters
 
 
