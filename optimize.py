@@ -26,8 +26,7 @@ import numpy as np
 from tqdm import tqdm
 
 import HTM as bb
-from HTM import CONNECTED_PERM, ColumnField, Field, InputField
-from rdse import RDSEParameters, RandomDistributedScalarEncoder
+from HTM import CONNECTED_PERM, ColumnField, InputField
 
 
 @dataclass(frozen=True)
