@@ -1,4 +1,4 @@
-from itertools import chain, count
+from itertools import chain
 import copy
 import random
 from typing import (
@@ -12,10 +12,6 @@ from typing import (
 
 from statistics import fmean, pstdev
 
-from numpy import add
-
-from encoder_layer.base_encoder import BaseEncoder
-from encoder_layer.rdse import RDSEParameters, RandomDistributedScalarEncoder
 
 # Constants
 CONNECTED_PERM = 0.5  # Permanence threshold for a synapse to be considered connected
@@ -233,7 +229,6 @@ class Cell(Active, Winner, Predictive):
     
     Holds a (possibly empty) list of distal segments used for temporal learning.
     """
-    counter: int = 0  # Class-level counter for unique cell IDs
     
     def __init__(
         self,
@@ -245,14 +240,12 @@ class Cell(Active, Winner, Predictive):
         self.distal_field = distal_field
         self.segments: List[Segment] = []
         self.active_duty_cycle: float = 0.0
-        self.id = Cell.counter
-        Cell.counter += 1
         
     def initialize(self, distal_field: Field) -> None:
         self.distal_field = distal_field
     
     def __repr__(self) -> str:
-        return f"Cell(id={self.id})"
+        return f"Cell(id={id(self)})"
 
     def advance_state(self) -> None:
         self.prev_active = self.active
@@ -280,7 +273,6 @@ class Cell(Active, Winner, Predictive):
         
 class Column(Active, Predictive, Bursting):
     """Column containing cells and proximal synapses for spatial pooling."""
-    counter: int = 0  # Class-level counter for unique column IDs
     
     def __init__(
         self,
@@ -302,11 +294,9 @@ class Column(Active, Predictive, Bursting):
             )
             for _ in range(cells_per_column)
         ]
-        self.id = Column.counter
-        Column.counter += 1
     
     def __repr__(self) -> str:
-        return f"Column(id={self.id})"
+        return f"Column(id={id(self)})"
 
     @property
     def segments(self) -> List[Segment]:
