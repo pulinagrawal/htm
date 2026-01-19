@@ -1,4 +1,4 @@
-from itertools import chain
+from itertools import chain, count
 import copy
 import random
 from typing import (
@@ -11,6 +11,8 @@ from typing import (
 )
 
 from statistics import fmean, pstdev
+
+from numpy import add
 
 from encoder_layer.base_encoder import BaseEncoder
 from encoder_layer.rdse import RDSEParameters, RandomDistributedScalarEncoder
@@ -45,15 +47,20 @@ def make_state_class(label: str):
     def set_state(self):
         setattr(self, attr, True)
 
-    def clear_state(self):
+    def advance_state(self):
         setattr(self, prev_attr, getattr(self, attr))
         setattr(self, attr, False)
+
+    def clear_state(self):
+        setattr(self, attr, False)
+        setattr(self, prev_attr, False)
 
     namespace = {
         "__init__": __init__,
         "state_name": attr,
         "prev_state_name": prev_attr,
         f"set_{attr}": set_state,
+        "advance_state": advance_state,
         "clear_state": clear_state
     }
 
@@ -172,7 +179,7 @@ class Segment(Active, Learning, Matching):
         """Return count of previously active synapses, regardless of permanence."""
         return [syn for syn in self.synapses if syn.source_cell.prev_active]
 
-    def clear_state(self) -> None:
+    def advance_state(self) -> None:
         self.prev_active = self.active
         self.active = False
 
@@ -181,6 +188,14 @@ class Segment(Active, Learning, Matching):
 
         self.prev_matching = self.matching
         self.matching = False
+
+    def clear_state(self) -> None:
+        self.active = False
+        self.prev_active = False
+        self.learning = False
+        self.prev_learning = False
+        self.matching = False
+        self.prev_matching = False
 
     def adapt(self, strength:float=1.0) -> None:
         # Strengthen synapses to previously active cells
@@ -218,6 +233,7 @@ class Cell(Active, Winner, Predictive):
     
     Holds a (possibly empty) list of distal segments used for temporal learning.
     """
+    counter: int = 0  # Class-level counter for unique cell IDs
     
     def __init__(
         self,
@@ -229,14 +245,16 @@ class Cell(Active, Winner, Predictive):
         self.distal_field = distal_field
         self.segments: List[Segment] = []
         self.active_duty_cycle: float = 0.0
+        self.id = Cell.counter
+        Cell.counter += 1
         
     def initialize(self, distal_field: Field) -> None:
         self.distal_field = distal_field
     
     def __repr__(self) -> str:
-        return f"Cell(id={id(self)})"
+        return f"Cell(id={self.id})"
 
-    def clear_state(self) -> None:
+    def advance_state(self) -> None:
         self.prev_active = self.active
         self.active = False
 
@@ -247,10 +265,22 @@ class Cell(Active, Winner, Predictive):
         self.predictive = False
 
         for segment in self.segments:
+            segment.advance_state()
+
+    def clear_state(self) -> None:
+        self.active = False
+        self.prev_active = False
+        self.winner = False
+        self.prev_winner = False
+        self.predictive = False
+        self.prev_predictive = False
+
+        for segment in self.segments:
             segment.clear_state()
         
 class Column(Active, Predictive, Bursting):
     """Column containing cells and proximal synapses for spatial pooling."""
+    counter: int = 0  # Class-level counter for unique column IDs
     
     def __init__(
         self,
@@ -272,9 +302,11 @@ class Column(Active, Predictive, Bursting):
             )
             for _ in range(cells_per_column)
         ]
+        self.id = Column.counter
+        Column.counter += 1
     
     def __repr__(self) -> str:
-        return f"Column(id={id(self)})"
+        return f"Column(id={self.id})"
 
     @property
     def segments(self) -> List[Segment]:
@@ -287,7 +319,7 @@ class Column(Active, Predictive, Bursting):
         min_segments  = min(len(cell.segments) for cell in self.cells)
         return random.choice([cell for cell in self.cells if len(cell.segments) == min_segments])
     
-    def clear_state(self) -> None:
+    def advance_state(self) -> None:
         self.prev_active = self.active
         self.active = False
 
@@ -296,6 +328,17 @@ class Column(Active, Predictive, Bursting):
 
         self.prev_predictive = self.predictive
         self.predictive = False
+
+        for cell in self.cells:
+            cell.advance_state()
+
+    def clear_state(self) -> None:
+        self.active = False
+        self.prev_active = False
+        self.bursting = False
+        self.prev_bursting = False
+        self.predictive = False
+        self.prev_predictive = False
 
         for cell in self.cells:
             cell.clear_state()
@@ -341,17 +384,25 @@ class ColumnField(Field):
         non_temporal: bool = False,
         duty_cycle_period: int = DUTY_CYCLE_PERIOD,
     ) -> None:
+        self.num_columns = num_columns
+        self.cells_per_column = cells_per_column
         self.input_fields: List[Field] = list(input_fields)
         self.non_spatial = non_spatial
         self.non_temporal = non_temporal
+        self.duty_cycle_period = max(1, duty_cycle_period)
+        self._duty_cycle_window = 0
+        self._prev_winner_cells: Set[Cell] = set()
+        self.initialize()
+
+    def initialize(self) -> None:
         self.input_field = Field(chain.from_iterable(self.input_fields))
         if self.non_temporal:
-            cells_per_column = 1
+            self.cells_per_column = 1
         if self.non_spatial:
             num_columns = len(self.input_field.cells)
             self.columns: List[Column] = [
                 Column(
-                    cells_per_column=cells_per_column,
+                    cells_per_column=self.cells_per_column,
                 )
                 for _ in range(num_columns)
             ]
@@ -359,17 +410,40 @@ class ColumnField(Field):
             self.columns = [
                 Column(
                     self.input_field,
-                    cells_per_column=cells_per_column,
+                    cells_per_column=self.cells_per_column,
                 )
-                for _ in range(num_columns)
+                for _ in range(self.num_columns)
             ]
         super().__init__(chain.from_iterable(column.cells for column in self.columns))
         for column in self.columns:
             for cell in column.cells:
               cell.initialize(distal_field=self)
-        self.duty_cycle_period = max(1, duty_cycle_period)
-        self._duty_cycle_window = 0
-        self._prev_winner_cells: Set[Cell] = set()
+            
+        self.clear_states()
+    
+    def set_input_fields(self):
+        """Set the input fields for this ColumnField."""
+        self.input_fields = self.input_fields
+        self.initialize()
+    
+    def add_input_fields(self, fields: list[Field]) -> None:
+        """Add an input field to this ColumnField."""
+        self.input_fields.extend(fields)
+        additional_cells = Field(chain.from_iterable(field.cells for field in fields))
+        self.input_field.cells.extend(additional_cells)   
+        if self.non_spatial:
+            self.columns.extend(Column(cells_per_column=self.cells_per_column)
+                                for column in chain.from_iterable(field.cells for field in fields))
+            for column in self.columns:
+                for cell in column.cells:
+                    cell.initialize(distal_field=self)
+        else:
+            for column in self.columns:
+                column.input_field = self.input_field
+                column.receptive_field.union(additional_cells.sample(RECEPTIVE_FIELD_PCT))
+                column.potential_synapses = [ProximalSynapse(source_cell=cell) for cell in column.receptive_field 
+                                             if cell not in [syn.source_cell for syn in column.potential_synapses]]
+                column._update_connected_synapses()
 
     def __iter__(self):
         return iter(self.columns)
@@ -389,16 +463,24 @@ class ColumnField(Field):
         """Return set of previously winning cells in the field."""
         return self._prev_winner_cells
     
+    def advance_states(self) -> None:
+        for cls in ColumnField.__mro__:
+            if hasattr(cls, "advance_state") and cls not in (ColumnField, object):
+                cls.advance_state(self)
+        for column in self.columns:
+            column.advance_state()
+        self._prev_winner_cells = set(cell for cell in self.cells if cell.prev_winner)
+
     def clear_states(self) -> None:
         for cls in ColumnField.__mro__:
             if hasattr(cls, "clear_state") and cls not in (ColumnField, object):
                 cls.clear_state(self)
         for column in self.columns:
             column.clear_state()
-        self._prev_winner_cells = set(cell for cell in self.cells if cell.prev_winner)
+        self._prev_winner_cells = set()
 
     def compute(self, learn=True) -> None:
-        self.clear_states()
+        self.advance_states()
         
         if self.non_spatial:
             for column, input_cell in zip(self.columns, self.input_field.cells):
@@ -424,6 +506,8 @@ class ColumnField(Field):
 
             if learn:
                 self.learn()
+        
+        self.set_prediction()
 
         self._update_duty_cycles()
 
@@ -495,36 +579,14 @@ class ColumnField(Field):
                     if segment.matching:
                         segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
 
-    def get_prediction(self) -> List[Field]:
+    def set_prediction(self) -> List[Field]:
         """Return column-level predictive state and update source fields."""
-        column_cells: List[Cell] = []
-        for column in self.columns:
-            column_cell = Cell(parent_column=column)
-            if any(cell.predictive for cell in column.cells):
-                column_cell.set_predictive()
-            column_cells.append(column_cell)
+        if self.non_spatial:
+            for column, input_cell in zip(self.columns, self.input_field):
+                if any(cell.predictive for cell in column.cells):
+                    input_cell.set_predictive()
 
-        prediction_field = Field(column_cells)
-
-        if not self.input_fields:
-            return [prediction_field]
-
-        total_input_cells = sum(len(field.cells) for field in self.input_fields)
-        if total_input_cells != len(self.columns):
-            raise ValueError(
-                "Cannot split predictions into input_fields because the number of "
-                "columns does not match the combined size of the input fields."
-            )
-
-        split_fields: List[Field] = []
-        offset = 0
-        for source_field in self.input_fields:
-            field_size = len(source_field.cells)
-            column_slice = column_cells[offset : offset + field_size]
-            split_fields.append(Field(column_slice))
-            offset += field_size
-
-        return split_fields
+            return self.input_fields
 
     def _update_duty_cycles(self) -> None:
         self._duty_cycle_window = min(self.duty_cycle_period, self._duty_cycle_window + 1)
@@ -635,20 +697,26 @@ class InputField(Field):
 
     def encode(self, input_value: Any) -> List[int]:
         """Encode the input value into a binary vector."""
-        self.clear_states()
+        self.advance_states()
         encoded_bits = self.encoder.encode(input_value)
         for idx, cell in enumerate(self.cells):
             if encoded_bits[idx]:
                 cell.set_active()
         return encoded_bits
 
-    def decode(self, encoded: Field, state :str='active', candidates: Iterable[float] | None = None) -> Tuple[float | None]:
+    def decode(self, state :str='active', encoded: Field=None, candidates: Iterable[float] | None = None) -> Tuple[float | None]:
         """Convert active cells back to input value using RDSE decoding."""
         if state not in ('active', 'predictive'):
             raise ValueError(f"Invalid state '{state}'; must be 'active' or 'predictive'")
+        if encoded is None:
+            encoded = self.cells
         bit_vector = [getattr(cell, state)  for cell in encoded]
         return self.encoder.decode(bit_vector, candidates)
     
+    def advance_states(self) -> None:
+        for cell in self.cells:
+            cell.advance_state()
+
     def clear_states(self) -> None:
         for cell in self.cells:
             cell.clear_state()

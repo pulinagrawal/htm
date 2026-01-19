@@ -2,6 +2,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
 from pathlib import Path
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
 from tqdm import tqdm
 from src.HTM import ColumnField, InputField
 from encoder_layer.rdse import RDSEParameters
@@ -38,7 +40,7 @@ column_field = ColumnField(
     cells_per_column=config["cells_per_column"],
 )
 
-csv_path = Path(__file__).parent / "data" / "rec-center-hourly.csv"
+csv_path = Path(__file__).parent.parent / "data" / "rec-center-hourly.csv"
 df = pd.read_csv(csv_path, skiprows=3, names=["timestamp", "kw_energy_consumption"])
 
 def parse_timestamp(ts_str: str) -> datetime:
@@ -69,8 +71,7 @@ for idx in tqdm(range(500)):
     date = df["datetime"].iloc[index]
     value = df["kw_energy_consumption"].iloc[index]
     date_field.encode(date)
-    input_fields = column_field.get_prediction()
-    prediction, confidence = consumption_field.decode(input_fields[0], 'predictive')
+    prediction, confidence = consumption_field.decode('predictive')
     errors.append(abs(value - prediction)**2)
     actual_values.append(value)
     predicted_values.append(prediction)
