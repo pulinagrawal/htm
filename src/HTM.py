@@ -130,6 +130,33 @@ class Synapse:
         else:
             self.permanence = max(0.0, self.permanence - PERMANENCE_DEC * strength)
 
+    @property
+    def active(self) -> bool:
+        """Return whether the source cell is currently active."""
+        return self.source_cell.active and self.permanence >= CONNECTED_PERM
+
+    @property
+    def potentially_active(self) -> bool:
+        """Return whether the source cell is currently active, regardless of permanence."""
+        return self.source_cell.active and self.permanence > 0.0
+    
+    @property
+    def prev_active(self) -> bool:
+        """Return whether the source cell was previously active."""
+        return self.source_cell.prev_active
+
+class ApicalSynapse(Synapse):
+    """Apical synapse connecting to a higher-level field."""
+    
+    def __init__(self, source_cell: 'Cell', permanence: float) -> None:
+        super().__init__(source_cell, permanence)
+    
+    @property
+    def active(self) -> bool:
+        """Return whether the source cell is currently active."""
+        return self.source_cell.predictive and self.permanence >= CONNECTED_PERM
+
+
 class DistalSynapse(Synapse):
     """Distal synapse connecting to a source cell."""
     
@@ -143,17 +170,19 @@ class ProximalSynapse(Synapse):
 
 class Segment(Active, Learning, Matching):
     """Distal segment composed of synapses to cells."""
-    
+
     def __init__(
         self,
         parent_cell: 'Cell',
-        synapses: Optional[List[DistalSynapse]] = None,
+        synapses: Optional[List[Synapse]] = None,
+        synapse_cls = DistalSynapse
     ) -> None:
         super().__init__()
         self.parent_cell: 'Cell' = parent_cell
         self.synapses: List[DistalSynapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
         self.max_synapses = int(MAX_SYNAPSE_PCT*len(self.parent_cell.distal_field.cells))
+        self.synapse_cls = synapse_cls
         global debug
         if debug:
             print(f"Created Segment with max_synapses={self.max_synapses}")
@@ -162,18 +191,23 @@ class Segment(Active, Learning, Matching):
         self.learning_threshold_connected_pct: float = LEARNING_THRESHOLD_PCT
     
     def is_active(self) -> bool:
-        connected_synapses = [syn for syn in self.synapses 
-                              if syn.source_cell.active and syn.permanence >= CONNECTED_PERM]
+        connected_synapses = [syn for syn in self.synapses if syn.active]
         return len(connected_synapses) > self.activation_threshold*len(self.synapses)
 
     def is_potentially_active(self) -> bool:
-        connected_synapses = [syn for syn in self.synapses 
-                              if syn.source_cell.active and syn.permanence >= 0.0]
+        connected_synapses = [syn for syn in self.synapses if syn.potentially_active]
         return len(connected_synapses) > self.learning_threshold_connected_pct*len(self.synapses)
 
     def potential_prev_active_synapses(self) -> int:
         """Return count of previously active synapses, regardless of permanence."""
         return [syn for syn in self.synapses if syn.source_cell.prev_active]
+
+    def activate_segment(self) -> None:
+        if self.is_potentially_active():
+            self.set_matching()
+            if self.is_active():
+                self.set_active()
+                self.parent_cell.set_predictive()
 
     def advance_state(self) -> None:
         self.prev_active = self.active
@@ -210,7 +244,7 @@ class Segment(Active, Learning, Matching):
             random.shuffle(potential_cells)
             cells_to_connect = potential_cells[:growable_synapses]
             for cell in cells_to_connect:
-                new_syn = DistalSynapse(source_cell=cell, permanence=INITIAL_PERMANENCE)
+                new_syn = self.synapse_cls(source_cell=cell, permanence=INITIAL_PERMANENCE)
                 self.synapses.append(new_syn)
 
     def weaken(self, strength=1.0) -> None:
@@ -223,6 +257,21 @@ class Segment(Active, Learning, Matching):
                 kept.append(syn)
         self.synapses = kept
 
+class ApicalSegment(Segment):
+    """Apical segment connecting to higher-level field."""
+    def __init__(
+        self,
+        parent_cell: 'Cell',
+        synapses: Optional[List[ApicalSynapse]] = None,
+    ) -> None:
+        super().__init__(parent_cell, synapses, synapse_cls=ApicalSynapse)
+    
+    def activate_segment(self) -> None:
+        if self.is_potentially_active():
+            self.set_matching()
+            if self.is_active():
+                self.set_active()
+                self.parent_cell.set_predictive()
 
 class Cell(Active, Winner, Predictive):
     """Single cell within a column or layer.
@@ -234,15 +283,18 @@ class Cell(Active, Winner, Predictive):
         self,
         parent_column: 'Column|None' = None,
         distal_field: Field|None = None,
+        apical_field: Field|None = None,
     ) -> None:
         super().__init__()
         self.parent_column = parent_column
         self.distal_field = distal_field
+        self.apical_field = apical_field
         self.segments: List[Segment] = []
         self.active_duty_cycle: float = 0.0
         
-    def initialize(self, distal_field: Field) -> None:
+    def initialize(self, distal_field: Field, apical_field: Field) -> None:
         self.distal_field = distal_field
+        self.apical_field = apical_field
     
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
@@ -536,6 +588,8 @@ class ColumnField(Field):
                     winner_cell = column.least_used_cell
                     learning_segment = Segment(parent_cell=winner_cell)
                     winner_cell.segments.append(learning_segment)  # Same as 1) L35
+                    learning_apical_segment = ApicalSegment(parent_cell=winner_cell)
+                    winner_cell.segments.append(learning_apical_segment)
 
                 winner_cell.set_winner()              # Same as 2) L37
                 learning_segment.set_learning()      # Same as 1) L39
@@ -543,11 +597,7 @@ class ColumnField(Field):
     def depolarize_cells(self) -> None:
         for column in self.columns:
             for segment in column.segments:
-                if segment.is_potentially_active():
-                    segment.set_matching()
-                    if segment.is_active():
-                        segment.set_active()
-                        segment.parent_cell.set_predictive()
+                segment.activate_segment()
 
     def learn(self) -> None:
         for column in self.active_columns:
@@ -561,7 +611,7 @@ class ColumnField(Field):
             for segment in column.segments:
                 if segment.learning:               # Same as 1) L40-48
                     segment.grow()               
-                    segment.adapt(strength=5.0)          # Same as 1) L42-44 
+                    segment.adapt(strength=1.0)          # Same as 1) L42-44 
 
         for column in self.columns:
             if not column.active:
