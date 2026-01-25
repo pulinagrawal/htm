@@ -3,8 +3,8 @@ import unittest
 
 import numpy as np
 
-from HTM import InputField, ColumnField
-from rdse import RDSEParameters
+from src.HTM import InputField, ColumnField
+from encoder_layer.rdse import RDSEParameters
 
 class TestRealData(unittest.TestCase):
 
@@ -29,7 +29,7 @@ class TestRealData(unittest.TestCase):
             category=False,
             seed=config["rdse_seed"],
         )
-        input_field = InputField(size=config["num_columns"], rdse_params=params)
+        input_field = InputField(size=config["num_columns"], encoder_params=params)
         column_field = ColumnField(
             input_fields=[input_field],
             non_spatial=True,

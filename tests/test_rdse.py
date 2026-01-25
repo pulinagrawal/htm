@@ -1,6 +1,6 @@
 import pytest
 
-from rdse import RandomDistributedScalarEncoder, RDSEParameters
+from encoder_layer.rdse import RandomDistributedScalarEncoder, RDSEParameters
 
 
 def _make_encoder() -> RandomDistributedScalarEncoder:

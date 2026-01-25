@@ -2,13 +2,16 @@
 """Hyperparameter search to satisfy the sine-wave bursting regression test."""
 from __future__ import annotations
 
-from tqdm import tqdm
 import random
-
 import numpy as np
+from tqdm import tqdm
 
-from HTM import ColumnField, InputField
-from rdse import RandomDistributedScalarEncoder as RDSE, RDSEParameters
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from src.HTM import ColumnField, InputField
+from encoder_layer.rdse import RandomDistributedScalarEncoder as RDSE, RDSEParameters
 
 
 def test_sine_wave_bursting_columns_converge():
@@ -33,7 +36,7 @@ def test_sine_wave_bursting_columns_converge():
             category=False,
             seed=config["rdse_seed"],
         )
-        input_field = InputField(size=config["num_columns"], rdse_params=params)
+        input_field = InputField(size=config["num_columns"], encoder_params=params)
         column_field = ColumnField(
             input_fields=[input_field],
             non_spatial=True,
@@ -60,8 +63,7 @@ def test_sine_wave_bursting_columns_converge():
         errors = []
 
         for value in sine_cycle:
-            input_fields = column_field.get_prediction()
-            prediction, confidence = input_field.decode(input_fields[0], 'predictive')
+            prediction, confidence = input_field.decode('predictive')
             errors.append(abs(value - prediction)**2)
             input_field.encode(value)
             column_field.compute(learn=False)

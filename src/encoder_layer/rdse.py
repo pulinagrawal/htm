@@ -6,7 +6,7 @@ from typing import Iterable, List, Tuple, override
 
 import mmh3
 
-from base_encoder import BaseEncoder
+from encoder_layer.base_encoder import BaseEncoder
 
 """
  * Parameters for the RandomDistributedScalarEncoder (RDSE)
@@ -18,50 +18,6 @@ from base_encoder import BaseEncoder
  * exactly one of them.
 """
 
-
-@dataclass
-class RDSEParameters:
-
-    size: int = 0
-    """
-    * Member "size" is the total number of bits in the encoded output SDR.
-    """
-    active_bits: int = 0
-    """
-    * Member "activeBits" is the number of true bits in the encoded output SDR.
-    """
-    sparsity: float = 0
-    """
-    * Member "sparsity" is the fraction of bits in the encoded output which this
-    * encoder will activate. This is an alternative way to specify the member
-    * "activeBits".
-    """
-    radius: float = 0
-    """
-    * Member "radius" Two inputs separated by more than the radius have
-    * non-overlapping representations. Two inputs separated by less than the
-    * radius will in general overlap in at least some of their bits. You can
-    * think of this as the radius of the input.
-    """
-    resolution: float = 0
-    """
-    * Member "resolution" Two inputs separated by greater than, or equal to the
-    * resolution will in general have different representations.
-    """
-    category: bool = False
-    """
-    * Member "category" means that the inputs are enumerated categories.
-    * If true then this encoder will only encode unsigned integers, and all
-    * inputs will have unique / non-overlapping representations.
-    """
-    seed: int = 0
-    """
-    * Member "seed" forces different encoders to produce different outputs, even
-    * if the inputs and all other parameters are the same.  Two encoders with the
-    * same seed, parameters, and input will produce identical outputs.
-    *
-    * The seed 0 is special.  Seed 0 is replaced with a random number.
-    """
 
 
 """
@@ -79,7 +35,7 @@ class RDSEParameters:
 class RandomDistributedScalarEncoder(BaseEncoder[float]):
     """Random Distributed Scalar Encoder (RDSE) implementation."""
 
-    def __init__(self, parameters: RDSEParameters, dimensions: List[int] | None = None):
+    def __init__(self, parameters: 'RDSEParameters', dimensions: List[int] | None = None):
         self._parameters = copy.deepcopy(parameters)
         self._parameters = self.check_parameters(self._parameters)
 
@@ -181,7 +137,7 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
         return sum(1 for a, b in zip(first, second) if a == 1 and b == 1)
 
     # After encode we may need a check_parameters method since most of the encoders have this
-    def check_parameters(self, parameters: RDSEParameters):
+    def check_parameters(self, parameters: 'RDSEParameters'):
         assert parameters.size > 0
 
         num_active_args = 0
@@ -234,14 +190,62 @@ def sparsify(vector: List[int]) -> List[int]:
     """Converts a sparse activity vector to a activation list."""
     return [i for i, bit in enumerate(vector) if bit == 1]
 
+@dataclass
+class RDSEParameters:
+
+    size: int = 0
+    """
+    * Member "size" is the total number of bits in the encoded output SDR.
+    """
+    active_bits: int = 0
+    """
+    * Member "activeBits" is the number of true bits in the encoded output SDR.
+    """
+    sparsity: float = 0
+    """
+    * Member "sparsity" is the fraction of bits in the encoded output which this
+    * encoder will activate. This is an alternative way to specify the member
+    * "activeBits".
+    """
+    radius: float = 0
+    """
+    * Member "radius" Two inputs separated by more than the radius have
+    * non-overlapping representations. Two inputs separated by less than the
+    * radius will in general overlap in at least some of their bits. You can
+    * think of this as the radius of the input.
+    """
+    resolution: float = 0
+    """
+    * Member "resolution" Two inputs separated by greater than, or equal to the
+    * resolution will in general have different representations.
+    """
+    category: bool = False
+    """
+    * Member "category" means that the inputs are enumerated categories.
+    * If true then this encoder will only encode unsigned integers, and all
+    * inputs will have unique / non-overlapping representations.
+    """
+    seed: int = 0
+    """
+    * Member "seed" forces different encoders to produce different outputs, even
+    * if the inputs and all other parameters are the same.  Two encoders with the
+    * same seed, parameters, and input will produce identical outputs.
+    *
+    * The seed 0 is special.  Seed 0 is replaced with a random number.
+    """
+    encoder_class = RandomDistributedScalarEncoder
+
 if __name__ == "__main__":
     # Tests
     params = RDSEParameters(
-        size=1000, active_bits=20, sparsity=0.0, radius=10, resolution=0, category=False, seed=1
+        size=1000, active_bits=20, sparsity=0.0, radius=0, resolution=.1, category=False, seed=1
     )
     e1 = RandomDistributedScalarEncoder(params)
-    print(sparsify(e1.encode(10.0)))
-    print(sparsify(e1.encode(20.0)))
+    a = sparsify(e1.encode(1001.0))
+    b = sparsify(e1.encode(12.0))
+    print(a)
+    print(b)
+    print("Overlap between 1.0 and 19.0:", (set(a) & set(b)))
     print(sparsify(e1.encode(1000.0)))
     """encoder = RandomDistributedScalarEncoder(params)
     output = SDR([encoder.size])
