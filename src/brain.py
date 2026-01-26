@@ -6,7 +6,7 @@ for encoding inputs and computing temporal memory in a single step.
 
 from typing import Any
 
-from src.HTM import ColumnField, InputField, Field
+from src.sungur import ColumnField, InputField, Field, OutputField
 
 
 class Brain:
@@ -31,11 +31,17 @@ class Brain:
 
     def __init__(self, fields: dict[str, Field]) -> None:
         self._input_fields: dict[str, InputField] = {k:v for k,v in fields.items() if isinstance(v, InputField)}
+        self._output_fields: dict[str, OutputField] = {k:v for k,v in fields.items() if isinstance(v, OutputField)}
         self._column_fields: dict[str, ColumnField] = {k:v for k,v in fields.items() if isinstance(v, ColumnField)}
         self.fields = fields
     
     def __getitem__(self, name: str) -> Field:
         return self.fields[name]
+
+    def __getattr__(self, name: str) -> Field:
+        if name in self.fields:
+            return self.fields[name]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
     def step(
         self,
@@ -50,6 +56,7 @@ class Brain:
         """
         self.encode_only(inputs)
         self.compute_only(learn=learn)
+        return {name: field.decode() for name, field in self._output_fields.items()}
 
     def prediction(self) -> tuple[Any, ...]:
         """Get the current prediction for a specific input field.

@@ -27,10 +27,9 @@ consumption_field = InputField(encoder_params=params)
 
 date_params = DateEncoderParameters(
     day_of_week_radius=1,
-    day_of_week_width=100,
+    day_of_week_width=10,
     time_of_day_radius=1,
-    time_of_day_width=100,
-    weekend_width=20, 
+    time_of_day_width=10,
 )
 date_field = InputField(encoder_params=date_params)
 column_field = ColumnField(
@@ -72,7 +71,7 @@ for idx in tqdm(range(500)):
     value = df["kw_energy_consumption"].iloc[index]
     date_field.encode(date)
     prediction, confidence = consumption_field.decode('predictive')
-    errors.append(abs(value - prediction)**2)
+    errors.append(abs(value - prediction))
     actual_values.append(value)
     predicted_values.append(prediction)
     consumption_field.encode(value)

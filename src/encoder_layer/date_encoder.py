@@ -36,6 +36,9 @@ from datetime import datetime
 from typing import Dict, List, override
 
 import pandas as pd
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
 
 from encoder_layer.rdse import RandomDistributedScalarEncoder, RDSEParameters
 from encoder_layer.base_encoder import BaseEncoder
@@ -157,7 +160,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
         if args.day_of_week_width != 0:
             if self._rdse_used:
                 p = RDSEParameters(
-                    size=10,
+                    size=100,
                     active_bits=args.day_of_week_width,
                     sparsity=0.0,
                     radius=args.day_of_week_radius,
@@ -319,7 +322,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
         if args.time_of_day_width != 0:
             if self._rdse_used:
                 p = RDSEParameters(
-                    size=10,
+                    size=100,
                     active_bits=args.time_of_day_width,
                     sparsity=0.0,
                     radius=args.time_of_day_radius,
@@ -393,7 +396,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
             bucket_idx = math.floor(day_of_year / self._season_encoder._radius)
             self._buckets[self._bucketMap[self.SEASON]] = float(bucket_idx)
 
-            encodings.append((sparse, self._season_encoder._size))
+            encodings.extend(sparse)
 
         # --- Day of week (Monday=0..Sunday=6, same as header comment) ---
         if self._dayofweek_encoder is not None:
@@ -407,7 +410,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
             bucket_val = day_of_week - math.fmod(day_of_week, radius)
             self._buckets[self._bucketMap[self.DAYOFWEEK]] = bucket_val
 
-            encodings.append((sparse, self._dayofweek_encoder._size))
+            encodings.extend(sparse)
 
         else:
             # still compute c_tm_wday for weekend/custom use
@@ -423,7 +426,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
             sparse = self._weekend_encoder.encode(val)
             self._buckets[self._bucketMap[self.WEEKEND]] = val
 
-            encodings.append((sparse, self._weekend_encoder._size))
+            encodings.extend(sparse)
 
         # --- Custom days ---
         if self._customdays_encoder is not None:
@@ -432,7 +435,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
             sparse = self._customdays_encoder.encode(custom_val)
             self._buckets[self._bucketMap[self.CUSTOM]] = custom_val
 
-            encodings.append((sparse, self._customdays_encoder._size))
+            encodings.extend(sparse)
 
         # --- Holiday ramp ---
         if self._holiday_encoder is not None:
@@ -440,7 +443,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
             sparse = self._holiday_encoder.encode(val)
             self._buckets[self._bucketMap[self.HOLIDAY]] = math.floor(val)
 
-            encodings.append((sparse, self._holiday_encoder._size))
+            encodings.extend(sparse)
 
         # --- Time of day ---
         if self._timeofday_encoder is not None:
@@ -450,20 +453,13 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
             bucket_val = tod - math.fmod(tod, radius)
             self._buckets[self._bucketMap[self.TIMEOFDAY]] = bucket_val
 
-            encodings.append((sparse, self._timeofday_encoder._size))
+            encodings.extend(sparse)
 
         if not encodings:
             raise RuntimeError("DateEncoder misconfigured: no sub-encoders enabled.")
 
         # Concatenate encodings into a single list of sparse indices
-        all_sparse: List[int] = []
-        offset = 0
-        for sparse, size in encodings:
-            for idx in sparse:
-                all_sparse.append(idx + offset)
-            offset += size
-
-        return all_sparse
+        return encodings
 
     def _holiday_value(self, t: time.struct_time) -> float:
         """Return the holiday ramp value for the provided timestamp."""
@@ -497,22 +493,6 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
         dt = datetime(year, mon, day, hr, minute, sec)
         return time.mktime(dt.timetuple())
 
-
-if __name__ == "__main__":
-    params = DateEncoderParameters(
-        season_width=10,
-        day_of_week_width=5,
-        weekend_width=3,
-        holiday_width=4,
-        time_of_day_width=6,
-        custom_width=3,
-        custom_days=["mon,wed,fri"],
-        rdse_used=True,
-    )
-    encoder = DateEncoder(params)
-    output = encoder.encode(datetime.now())
-    print("Output size:", encoder._size)
-    print("Active indices:", output)
 
 @dataclass
 class DateEncoderParameters:
@@ -611,3 +591,18 @@ class DateEncoderParameters:
     """Enable RDSE usage for date encoder."""
 
     encoder_class = DateEncoder
+
+
+if __name__ == "__main__":
+
+    date_params = DateEncoderParameters(
+        day_of_week_radius=1,
+        day_of_week_width=10,
+        time_of_day_radius=1,
+        time_of_day_width=10,
+        weekend_width=20, 
+    )
+    encoder = DateEncoder(date_params)
+    output = encoder.encode(datetime(2026, 1, 26, 14, 30, 0))
+    print("Output size:", encoder._size)
+    print("Active indices:", output)

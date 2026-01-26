@@ -24,8 +24,8 @@ GROWTH_STRENGTH = 0.5  # Fraction of max synapses to grow on a segment during le
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
 MAX_SYNAPSE_PCT = 0.02  # Max synapses as a percentage of distal field size
-ACTIVATION_THRESHOLD_PCT = 0.5  # Activation threshold as a percentage of synapses on segment   
-LEARNING_THRESHOLD_PCT = 0.25  # Learning threshold as a percentage of synapses on segment
+ACTIVATION_THRESHOLD_PCT = 0.8  # Activation threshold as a percentage of synapses on segment   
+LEARNING_THRESHOLD_PCT = 0.5  # Learning threshold as a percentage of synapses on segment
 
 debug = False
 
@@ -459,7 +459,7 @@ class ColumnField(Field):
         super().__init__(chain.from_iterable(column.cells for column in self.columns))
         for column in self.columns:
             for cell in column.cells:
-              cell.initialize(distal_field=self)
+              cell.initialize(distal_field=self, apical_field=None)
             
         self.clear_states()
     
@@ -478,7 +478,7 @@ class ColumnField(Field):
                                 for column in chain.from_iterable(field.cells for field in fields))
             for column in self.columns:
                 for cell in column.cells:
-                    cell.initialize(distal_field=self)
+                    cell.initialize(distal_field=self, apical_field=None)
         else:
             for column in self.columns:
                 column.input_field = self.input_field
@@ -588,8 +588,8 @@ class ColumnField(Field):
                     winner_cell = column.least_used_cell
                     learning_segment = Segment(parent_cell=winner_cell)
                     winner_cell.segments.append(learning_segment)  # Same as 1) L35
-                    learning_apical_segment = ApicalSegment(parent_cell=winner_cell)
-                    winner_cell.segments.append(learning_apical_segment)
+                    # learning_apical_segment = ApicalSegment(parent_cell=winner_cell)
+                    # winner_cell.segments.append(learning_apical_segment)
 
                 winner_cell.set_winner()              # Same as 2) L37
                 learning_segment.set_learning()      # Same as 1) L39
@@ -761,6 +761,8 @@ class InputField(Field):
         for cell in self.cells:
             cell.clear_state()
 
+class OutputField(InputField):
+    pass
 
 input_field = Field(cells={Cell() for _ in range(10)})
 
