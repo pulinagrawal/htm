@@ -519,11 +519,12 @@ class ColumnField(Field):
         for column in self.active_columns:
             if any(cell.prev_predictive for cell in column.cells): # Same as 1) L3
                 column.set_predictive()
-                for segment in column.segments:
-                    if segment.prev_active:                        # Same as 1) L11 
-                        segment.parent_cell.set_active()
-                        segment.parent_cell.set_winner()          # Same as 1) L13
-                        segment.set_learning()
+                for cell in column.cells:
+                    for segment in cell.segments:
+                        if segment.prev_active:                        # Same as 1) L11 
+                            segment.parent_cell.set_active()
+                            segment.parent_cell.set_winner()          # Same as 1) L13
+                            segment.set_learning()
 
             if not any(cell.prev_predictive for cell in column.cells):  # Same as 1) L5
                 column.set_bursting()
@@ -542,32 +543,36 @@ class ColumnField(Field):
     
     def depolarize_cells(self) -> None:
         for column in self.columns:
-            for segment in column.segments:
-                if segment.is_potentially_active():
-                    segment.set_matching()
-                    if segment.is_active():
-                        segment.set_active()
-                        segment.parent_cell.set_predictive()
+            for cell in column.cells:
+                for segment in cell.segments:
+                    if segment.is_potentially_active():
+                        segment.set_matching()
+                        if segment.is_active():
+                            segment.set_active()
+                            segment.parent_cell.set_predictive()
 
     def learn(self) -> None:
         for column in self.active_columns:
             if not column.bursting:
-                for segment in column.segments:
-                    if segment.learning:
-                        segment.grow()               # Same as 1) L22-24
-                        segment.adapt()               # Same as 1) L16-20
+                for cell in column.cells:
+                    for segment in cell.segments:
+                        if segment.learning:
+                            segment.grow()               # Same as 1) L22-24
+                            segment.adapt()               # Same as 1) L16-20
         
         for column in self.bursting_columns:
-            for segment in column.segments:
-                if segment.learning:               # Same as 1) L40-48
-                    segment.grow()               
-                    segment.adapt(strength=5.0)          # Same as 1) L42-44 
+            for cell in column.cells:
+                for segment in cell.segments:
+                    if segment.learning:               # Same as 1) L40-48
+                        segment.grow()               
+                        segment.adapt(strength=5.0)          # Same as 1) L42-44 
 
         for column in self.columns:
             if not column.active:
-                for segment in column.segments:
-                    if segment.matching:
-                        segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
+                for cell in column.cells:
+                    for segment in cell.segments:
+                        if segment.matching:
+                            segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
 
     def set_prediction(self) -> List[Field]:
         """Return column-level predictive state and update source fields."""
