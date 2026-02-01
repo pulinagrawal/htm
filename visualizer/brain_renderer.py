@@ -404,73 +404,82 @@ class BrainRenderer:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _point_to_ray_dist(point: np.ndarray, ray_origin: np.ndarray,
-                           ray_dir: np.ndarray) -> float:
-        """Perpendicular distance from a point to an infinite ray."""
+    def _point_ray_metrics(point: np.ndarray, ray_origin: np.ndarray,
+                           ray_dir: np.ndarray) -> tuple[float, float]:
+        """Return (perpendicular distance to ray, depth along ray).
+
+        Depth is used for tie-breaking: when two elements have similar
+        ray distance, prefer the one closer to the camera.
+        """
         v = point - ray_origin
-        # Project v onto ray_dir
         t = np.dot(v, ray_dir)
         if t < 0:
-            # Point is behind the camera
-            return float("inf")
+            return float("inf"), float("inf")
         closest = ray_origin + t * ray_dir
-        return np.linalg.norm(point - closest)
+        return float(np.linalg.norm(point - closest)), t
 
     def pick_by_ray(self, ray_origin: np.ndarray, ray_dir: np.ndarray,
                     tolerance: float = 0.3) -> dict | None:
         """Find the element whose center is closest to the pick ray.
 
-        Uses point-to-ray perpendicular distance which is invariant to
-        camera distance and much more accurate than point-to-point from
-        a surface hit.
+        Uses perpendicular distance for accuracy. When two elements are
+        within 20% of each other in ray distance, the one closer to the
+        camera (smaller depth) wins.
         """
         best_dist = tolerance
+        best_depth = float("inf")
         result = None
+
+        def _consider(dist, depth, info):
+            nonlocal best_dist, best_depth, result
+            # Strict improvement in ray distance
+            if dist < best_dist * 0.8:
+                best_dist = dist
+                best_depth = depth
+                result = info
+            # Similar ray distance: prefer closer to camera
+            elif dist < best_dist and depth < best_depth:
+                best_dist = dist
+                best_depth = depth
+                result = info
 
         for name, field in self.brain._column_fields.items():
             layout = self.layouts[name]
             for ci, col in enumerate(field.columns):
                 for ji, cell in enumerate(col.cells):
                     cell_pos = layout.cell_positions[(ci, ji)]
-                    dist = self._point_to_ray_dist(cell_pos, ray_origin, ray_dir)
-                    if dist < best_dist:
-                        best_dist = dist
-                        result = {
-                            "type": "cell", "field": name,
-                            "col": ci, "cell": ji, "obj": cell,
-                            "pos": cell_pos, "segments": len(cell.segments),
-                            "active": cell.active, "predictive": cell.predictive,
-                            "winner": cell.winner,
-                        }
-                    # Check segments (smaller tolerance since they're smaller)
+                    dist, depth = self._point_ray_metrics(cell_pos, ray_origin, ray_dir)
+                    _consider(dist, depth, {
+                        "type": "cell", "field": name,
+                        "col": ci, "cell": ji, "obj": cell,
+                        "pos": cell_pos, "segments": len(cell.segments),
+                        "active": cell.active, "predictive": cell.predictive,
+                        "winner": cell.winner,
+                    })
                     n_segs = len(cell.segments)
                     for si, seg in enumerate(cell.segments):
                         offset = _segment_offset_direction(si, n_segs)
                         seg_pos = cell_pos + offset
-                        dist = self._point_to_ray_dist(seg_pos, ray_origin, ray_dir)
-                        if dist < best_dist:
-                            best_dist = dist
-                            result = {
-                                "type": "segment", "field": name,
-                                "col": ci, "cell": ji, "seg": si,
-                                "obj": seg, "pos": seg_pos,
-                                "synapses": len(seg.synapses),
-                                "active": seg.active, "learning": seg.learning,
-                                "matching": seg.matching,
-                            }
+                        dist, depth = self._point_ray_metrics(seg_pos, ray_origin, ray_dir)
+                        _consider(dist, depth, {
+                            "type": "segment", "field": name,
+                            "col": ci, "cell": ji, "seg": si,
+                            "obj": seg, "pos": seg_pos,
+                            "synapses": len(seg.synapses),
+                            "active": seg.active, "learning": seg.learning,
+                            "matching": seg.matching,
+                        })
 
         for name, field in self.brain._input_fields.items():
             layout = self.layouts[name]
             for ci, cell in enumerate(field.cells):
                 cell_pos = layout.cell_positions[(ci, 0)]
-                dist = self._point_to_ray_dist(cell_pos, ray_origin, ray_dir)
-                if dist < best_dist:
-                    best_dist = dist
-                    result = {
-                        "type": "input_cell", "field": name,
-                        "index": ci, "obj": cell, "pos": cell_pos,
-                        "active": cell.active, "predictive": cell.predictive,
-                    }
+                dist, depth = self._point_ray_metrics(cell_pos, ray_origin, ray_dir)
+                _consider(dist, depth, {
+                    "type": "input_cell", "field": name,
+                    "index": ci, "obj": cell, "pos": cell_pos,
+                    "active": cell.active, "predictive": cell.predictive,
+                })
 
         return result
 

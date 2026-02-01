@@ -9,7 +9,11 @@ from .brain_renderer import BrainRenderer
 from .connection_renderer import ConnectionRenderer
 from .controls import PlaybackController, setup_key_bindings
 from .history import History, HTMSnapshot
-from .colors import color_to_float, TEXT_COLOR, TITLE_COLOR, BG_COLOR
+from .colors import (
+    color_to_float, TEXT_COLOR, TITLE_COLOR, BG_COLOR,
+    COLORS, SEGMENT_COLORS,
+)
+from .brain_renderer import OUTGOING_SYN_COLOR, INCOMING_SYN_COLOR
 
 
 class HTMVisualizer:
@@ -41,6 +45,13 @@ class HTMVisualizer:
 
         # Multi-selection list
         self._selections: list[dict] = []
+
+        # Selection history
+        self._selection_history: list[list[dict]] = []
+        self._sel_hist_pos: int = -1
+
+        # Legend
+        self._show_legend = False
 
         # Metric tracking
         self.burst_history: list[int] = []
@@ -189,6 +200,7 @@ class HTMVisualizer:
         else:
             self._selections = [info]
 
+        self._push_selection_history()
         self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
         self._update_selection_overlay()
         self.plotter.render()
@@ -211,9 +223,37 @@ class HTMVisualizer:
 
     def clear_selection(self):
         self._selections.clear()
+        self._push_selection_history()
         self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
         self._update_selection_overlay()
         self.plotter.render()
+
+    def _push_selection_history(self):
+        # Truncate forward history if we navigated back
+        if self._sel_hist_pos < len(self._selection_history) - 1:
+            self._selection_history = self._selection_history[:self._sel_hist_pos + 1]
+        self._selection_history.append(list(self._selections))
+        self._sel_hist_pos = len(self._selection_history) - 1
+        # Cap at 100 entries
+        if len(self._selection_history) > 100:
+            self._selection_history.pop(0)
+            self._sel_hist_pos = len(self._selection_history) - 1
+
+    def selection_back(self):
+        if self._sel_hist_pos > 0:
+            self._sel_hist_pos -= 1
+            self._selections = list(self._selection_history[self._sel_hist_pos])
+            self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
+            self._update_selection_overlay()
+            self.plotter.render()
+
+    def selection_forward(self):
+        if self._sel_hist_pos < len(self._selection_history) - 1:
+            self._sel_hist_pos += 1
+            self._selections = list(self._selection_history[self._sel_hist_pos])
+            self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
+            self._update_selection_overlay()
+            self.plotter.render()
 
     def _add_selection_overlay(self):
         self.plotter.add_text(
@@ -311,6 +351,11 @@ class HTMVisualizer:
         self.brain_renderer.show_synapses = not self.brain_renderer.show_synapses
         self._update_display()
 
+    def toggle_legend(self):
+        self._show_legend = not self._show_legend
+        self._update_legend()
+        self.plotter.render()
+
     # ------------------------------------------------------------------
     # UI elements
     # ------------------------------------------------------------------
@@ -324,8 +369,8 @@ class HTMVisualizer:
     def _add_controls_text(self):
         self.plotter.add_text(
             "SPACE: Play/Pause  |  \u2192: Step  |  \u2190: Back  |  "
-            "S: Synapses  |  P: Proximal  |  R: Reset  |  "
-            "Click: Select  |  Shift+Click: Multi  |  ESC: Deselect",
+            "S: Synapses  |  P: Proximal  |  R: Reset  |  L: Legend  |  "
+            "[/]: Sel History  |  Click: Select  |  Shift+Click: Multi  |  ESC: Deselect",
             position="upper_edge", font_size=9,
             color=(0.5, 0.5, 0.5), name="controls_help",
         )
@@ -387,6 +432,43 @@ class HTMVisualizer:
             speed_callback, rng=[50, 2000], value=500,
             title="Speed (ms)", pointa=(0.7, 0.05), pointb=(0.95, 0.05),
             style="modern", color=color_to_float(TEXT_COLOR),
+        )
+
+    def _update_legend(self):
+        if not self._show_legend:
+            self.plotter.add_text("", position=(0.01, 0.25), font_size=9,
+                                  color=(0.5, 0.5, 0.5), name="legend")
+            return
+
+        lines = [
+            "=== LEGEND ===",
+            "",
+            "CELL STATES:",
+            "  Active      = Green",
+            "  Predictive  = Magenta",
+            "  Bursting    = Red",
+            "  Winner      = Yellow",
+            "  Correct Pred= Cyan",
+            "  Inactive    = Dark Gray",
+            "",
+            "SEGMENTS:",
+            "  Active      = Green",
+            "  Learning    = Orange",
+            "  Matching    = Blue",
+            "  Inactive    = Dark Gray",
+            "",
+            "SYNAPSES (permanence):",
+            "  0.0 = Dark Red",
+            "  0.5 = Neutral",
+            "  1.0 = Green",
+            "",
+            "SELECTION:",
+            "  Outgoing    = Gold",
+            "  Incoming    = Cyan",
+        ]
+        self.plotter.add_text(
+            "\n".join(lines), position=(0.01, 0.25), font_size=9,
+            color=(0.7, 0.7, 0.7), name="legend",
         )
 
     def _reset_camera(self):

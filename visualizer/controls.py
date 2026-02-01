@@ -53,4 +53,7 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("r", lambda: app.reset_view())
     plotter.add_key_event("p", lambda: app.toggle_proximal())
     plotter.add_key_event("s", lambda: app.toggle_synapses())
+    plotter.add_key_event("l", lambda: app.toggle_legend())
     plotter.add_key_event("Escape", lambda: app.clear_selection())
+    plotter.add_key_event("bracketleft", lambda: app.selection_back())
+    plotter.add_key_event("bracketright", lambda: app.selection_forward())
