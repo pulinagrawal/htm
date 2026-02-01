@@ -69,11 +69,9 @@ class HTMVisualizer:
         self.playback.step_back = self._step_back_history
         setup_key_bindings(self.plotter, self)
 
-        # Picking: left-click selects, we check shift in the callback
-        self.plotter.enable_point_picking(
-            callback=self._on_pick, show_message=False,
-            show_point=False, pickable_window=True,
-            left_clicking=True, tolerance=0.025,
+        # Selection via left-click: use iren click observer for ray-based picking
+        self.plotter.iren.track_click_position(
+            callback=self._on_click, side="left",
         )
 
         self._add_title()
@@ -158,31 +156,37 @@ class HTMVisualizer:
     # Selection (picking)
     # ------------------------------------------------------------------
 
-    def _on_pick(self, point):
-        """Handle click. Plain click = replace selection. Shift+click = add."""
-        if point is None:
+    def _on_click(self, click_pos):
+        """Handle left-click via ray-based picking for accurate selection."""
+        if click_pos is None:
             return
 
-        pos = np.array(point)
-        info = self.brain_renderer.pick_info(pos)
+        # Build a ray from camera through the clicked world position
+        cam_pos = np.array(self.plotter.camera.position)
+        click_world = np.array(click_pos)
+        ray_dir = click_world - cam_pos
+        ray_len = np.linalg.norm(ray_dir)
+        if ray_len < 1e-9:
+            return
+        ray_dir = ray_dir / ray_len
+
+        info = self.brain_renderer.pick_by_ray(cam_pos, ray_dir)
         if info is None:
             return
 
-        # Check if shift is held via the interactor
+        # Check if shift is held
         shift_held = False
         iren = self.plotter.iren.interactor
         if iren is not None:
             shift_held = bool(iren.GetShiftKey())
 
         if shift_held:
-            # Toggle: if already selected, deselect; otherwise add
             existing = self._find_matching_selection(info)
             if existing is not None:
                 self._selections.remove(existing)
             else:
                 self._selections.append(info)
         else:
-            # Replace selection
             self._selections = [info]
 
         self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
