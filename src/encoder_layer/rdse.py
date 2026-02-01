@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from typing import Iterable, List, Tuple, override
 
 import mmh3
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
 
 from encoder_layer.base_encoder import BaseEncoder
 
@@ -78,7 +81,7 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
 
         search_values = list(candidates) if candidates is not None else list(self._encoding_cache.keys())
         if not search_values:
-            raise ValueError("No candidate encodings available for decoding")
+            return None, 0.0
 
         best_value: float | None = None
         best_overlap = -1
