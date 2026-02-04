@@ -12,8 +12,11 @@ class PlaybackController:
         self.playing = False
         self.speed_ms = 500
         self._timer_id = None
+        self._observer_id = None
+        self._plotter = None
 
     def toggle_play(self, plotter):
+        self._plotter = plotter
         self.playing = not self.playing
         if self.playing:
             self._start_timer(plotter)
@@ -31,18 +34,25 @@ class PlaybackController:
         self.speed_ms = max(50, speed_ms)
 
     def _start_timer(self, plotter):
+        # Clean up any existing timer first
+        self._stop_timer(plotter)
+        
         def on_timer(obj, event):
             if self.playing:
                 self.step_forward()
 
-        iren = plotter.iren
-        iren.add_timer_event(on_timer)
-        self._timer_id = iren.create_timer(self.speed_ms, repeating=True)
+        vtk_iren = plotter.iren.interactor
+        self._observer_id = vtk_iren.AddObserver("TimerEvent", on_timer)
+        self._timer_id = vtk_iren.CreateRepeatingTimer(self.speed_ms)
 
     def _stop_timer(self, plotter):
+        vtk_iren = plotter.iren.interactor
         if self._timer_id is not None:
-            plotter.iren.destroy_timer(self._timer_id)
+            vtk_iren.DestroyTimer(self._timer_id)
             self._timer_id = None
+        if self._observer_id is not None:
+            vtk_iren.RemoveObserver(self._observer_id)
+            self._observer_id = None
 
 
 def setup_key_bindings(plotter, app):

@@ -435,41 +435,51 @@ class HTMVisualizer:
         )
 
     def _update_legend(self):
+        # Remove existing legend actors
+        if hasattr(self, '_legend_actors'):
+            for actor in self._legend_actors:
+                try:
+                    self.plotter.remove_actor(actor)
+                except Exception:
+                    pass
+        self._legend_actors = []
+
         if not self._show_legend:
-            self.plotter.add_text("", position=(0.01, 0.25), font_size=9,
-                                  color=(0.5, 0.5, 0.5), name="legend")
             return
 
-        lines = [
-            "=== LEGEND ===",
-            "",
-            "CELL STATES:",
-            "  Active      = Green",
-            "  Predictive  = Magenta",
-            "  Bursting    = Red",
-            "  Winner      = Yellow",
-            "  Correct Pred= Cyan",
-            "  Inactive    = Dark Gray",
-            "",
-            "SEGMENTS:",
-            "  Active      = Green",
-            "  Learning    = Orange",
-            "  Matching    = Blue",
-            "  Inactive    = Dark Gray",
-            "",
-            "SYNAPSES (permanence):",
-            "  0.0 = Dark Red",
-            "  0.5 = Neutral",
-            "  1.0 = Green",
-            "",
-            "SELECTION:",
-            "  Outgoing    = Gold",
-            "  Incoming    = Cyan",
+        # Build legend entries as (label, color) tuples using actual color variables
+        cell_entries = [
+            ("Active", color_to_float(COLORS["active"])),
+            ("Predictive", color_to_float(COLORS["predictive"])),
+            ("Bursting", color_to_float(COLORS["bursting"])),
+            ("Winner", color_to_float(COLORS["winner"])),
+            ("Correct Pred", color_to_float(COLORS["correct_prediction"])),
+            ("Inactive", color_to_float(COLORS["inactive"])),
         ]
-        self.plotter.add_text(
-            "\n".join(lines), position=(0.01, 0.25), font_size=9,
-            color=(0.7, 0.7, 0.7), name="legend",
+
+        segment_entries = [
+            ("Seg Active", color_to_float(SEGMENT_COLORS["active"])),
+            ("Seg Learning", color_to_float(SEGMENT_COLORS["learning"])),
+            ("Seg Matching", color_to_float(SEGMENT_COLORS["matching"])),
+            ("Seg Inactive", color_to_float(SEGMENT_COLORS["inactive"])),
+        ]
+
+        synapse_entries = [
+            ("Outgoing Syn", color_to_float(OUTGOING_SYN_COLOR)),
+            ("Incoming Syn", color_to_float(INCOMING_SYN_COLOR)),
+        ]
+
+        all_entries = cell_entries + segment_entries + synapse_entries
+
+        legend_actor = self.plotter.add_legend(
+            labels=all_entries,
+            bcolor=(0.1, 0.1, 0.1),
+            border=True,
+            size=(0.15, 0.35),
+            loc="lower left",
+            name="legend",
         )
+        self._legend_actors.append(legend_actor)
 
     def _reset_camera(self):
         self.plotter.camera_position = "xz"

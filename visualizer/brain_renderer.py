@@ -199,7 +199,7 @@ class BrainRenderer:
                                 syn_colors.append(permanence_color(syn.permanence))
 
         if seg_positions:
-            self._add_sphere_glyph(
+            self._add_cube_glyph(
                 plotter, np.array(seg_positions),
                 np.array(seg_colors, dtype=np.uint8),
                 SEGMENT_RADIUS, f"segments_{name}",
@@ -524,6 +524,17 @@ class BrainRenderer:
         spheres["colors"] = np.repeat(colors, sphere_geom.n_points, axis=0)
         plotter.add_mesh(
             spheres, scalars="colors", rgb=True,
+            show_scalar_bar=False, name=actor_name, pickable=True,
+        )
+
+    def _add_cube_glyph(self, plotter, points, colors, size, actor_name):
+        cloud = pv.PolyData(points)
+        cloud["colors"] = colors
+        cube_geom = pv.Cube(x_length=size * 2, y_length=size * 2, z_length=size * 2)
+        cubes = cloud.glyph(geom=cube_geom, orient=False, scale=False)
+        cubes["colors"] = np.repeat(colors, cube_geom.n_points, axis=0)
+        plotter.add_mesh(
+            cubes, scalars="colors", rgb=True,
             show_scalar_bar=False, name=actor_name, pickable=True,
         )
 
