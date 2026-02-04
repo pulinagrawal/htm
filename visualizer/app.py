@@ -351,6 +351,14 @@ class HTMVisualizer:
         self.brain_renderer.show_synapses = not self.brain_renderer.show_synapses
         self._update_display()
 
+    def toggle_outgoing_synapses(self):
+        self.brain_renderer.show_outgoing_synapses = not self.brain_renderer.show_outgoing_synapses
+        self._update_display()
+
+    def toggle_incoming_synapses(self):
+        self.brain_renderer.show_incoming_synapses = not self.brain_renderer.show_incoming_synapses
+        self._update_display()
+
     def toggle_legend(self):
         self._show_legend = not self._show_legend
         self._update_legend()
@@ -369,8 +377,8 @@ class HTMVisualizer:
     def _add_controls_text(self):
         self.plotter.add_text(
             "SPACE: Play/Pause  |  \u2192: Step  |  \u2190: Back  |  "
-            "S: Synapses  |  P: Proximal  |  R: Reset  |  L: Legend  |  "
-            "[/]: Sel History  |  Click: Select  |  Shift+Click: Multi  |  ESC: Deselect",
+            "S: Synapses  |  P: Proximal  |  O: Outgoing  |  I: Incoming  |  "
+            "R: Reset  |  L: Legend  |  [/]: Sel History  |  Click: Select  |  ESC: Deselect",
             position="upper_edge", font_size=9,
             color=(0.5, 0.5, 0.5), name="controls_help",
         )
@@ -422,6 +430,8 @@ class HTMVisualizer:
         lines.append(f"\nHistory: {self.history._position + 1}/{len(self.history)}")
         lines.append(f"Synapses: {'ON' if self.brain_renderer.show_synapses else 'OFF'}")
         lines.append(f"Proximal: {'ON' if self.show_proximal else 'OFF'}")
+        lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
+        lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
         return "\n".join(lines)
 
     def _add_widgets(self):

@@ -71,6 +71,8 @@ class BrainRenderer:
         self.layouts: dict[str, FieldLayout] = {}
         self._cell_id_to_pos: dict[int, np.ndarray] = {}
         self.show_synapses = True
+        self.show_outgoing_synapses = True
+        self.show_incoming_synapses = True
         self._compute_layouts()
         self._build_cell_index()
 
@@ -378,13 +380,13 @@ class BrainRenderer:
 
                             source_is_selected = id(syn.source_cell) in selected_cell_ids
 
-                            if cell_is_selected or seg_is_selected:
+                            if (cell_is_selected or seg_is_selected) and self.show_outgoing_synapses:
                                 # Outgoing: this cell's segment reads from source
                                 syn_starts.append(seg_pos)
                                 syn_ends.append(src_pos)
                                 syn_colors.append(OUTGOING_SYN_COLOR)
 
-                            elif source_is_selected:
+                            elif source_is_selected and self.show_incoming_synapses:
                                 # Incoming: some other segment reads from selected cell
                                 syn_starts.append(seg_pos)
                                 syn_ends.append(src_pos)
