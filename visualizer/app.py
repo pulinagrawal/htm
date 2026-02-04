@@ -50,8 +50,9 @@ class HTMVisualizer:
         self._selection_history: list[list[dict]] = []
         self._sel_hist_pos: int = -1
 
-        # Legend
+        # Legend and shortcuts visibility
         self._show_legend = False
+        self._show_shortcuts = False
 
         # Metric tracking
         self.burst_history: list[int] = []
@@ -364,6 +365,11 @@ class HTMVisualizer:
         self._update_legend()
         self.plotter.render()
 
+    def toggle_shortcuts(self):
+        self._show_shortcuts = not self._show_shortcuts
+        self._update_shortcuts()
+        self.plotter.render()
+
     # ------------------------------------------------------------------
     # UI elements
     # ------------------------------------------------------------------
@@ -375,13 +381,59 @@ class HTMVisualizer:
         )
 
     def _add_controls_text(self):
+        # Show minimal hint at top
         self.plotter.add_text(
-            "SPACE: Play/Pause  |  \u2192: Step  |  \u2190: Back  |  "
-            "S: Synapses  |  P: Proximal  |  O: Outgoing  |  I: Incoming  |  "
-            "R: Reset  |  L: Legend  |  [/]: Sel History  |  Click: Select  |  ESC: Deselect",
+            "Press H for keyboard shortcuts",
             position="upper_edge", font_size=9,
-            color=(0.5, 0.5, 0.5), name="controls_help",
+            color=(0.5, 0.5, 0.5), name="controls_hint",
         )
+        self._shortcuts_actors = []
+
+    def _update_shortcuts(self):
+        # Remove existing shortcuts actors
+        if hasattr(self, '_shortcuts_actors'):
+            for actor in self._shortcuts_actors:
+                try:
+                    self.plotter.remove_actor(actor)
+                except Exception:
+                    pass
+        self._shortcuts_actors = []
+
+        if not self._show_shortcuts:
+            return
+
+        # Build shortcuts text with fixed-width columns
+        shortcuts_text = (
+            "SPACE       Play/Pause    \n"
+            "Arrow       Step fwd/back \n"
+            "S           Synapses      \n"
+            "P           Proximal      \n"
+            "O           Outgoing      \n"
+            "I           Incoming      \n"
+            "R           Reset camera  \n"
+            "L           Legend        \n"
+            "H           Shortcuts     \n"
+            "[  ]        Sel history   \n"
+            "Click       Select        \n"
+            "Shift+Click Multi-select  \n"
+            "ESC         Clear select  "
+        )
+
+        # Create text actor with monospace font
+        actor = self.plotter.add_text(
+            shortcuts_text,
+            position="upper_right",
+            font_size=9,
+            color=color_to_float(TEXT_COLOR),
+            name="shortcuts_box",
+            font="courier",
+        )
+        # Set text properties for box styling
+        actor.GetTextProperty().SetBackgroundColor(0.1, 0.1, 0.1)
+        actor.GetTextProperty().SetBackgroundOpacity(0.9)
+        actor.GetTextProperty().SetFrameColor(0.3, 0.3, 0.3)
+        actor.GetTextProperty().SetFrame(True)
+        self._shortcuts_actors.append(actor)
 
     def _add_stats_overlay(self):
         self.plotter.add_text(
