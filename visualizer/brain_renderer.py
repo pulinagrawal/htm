@@ -77,26 +77,136 @@ class BrainRenderer:
         self._compute_layouts()
         self._build_cell_index()
 
-    def _compute_layouts(self):
-        z = 0.0
-        for i, (name, field) in enumerate(self.brain._input_fields.items()):
-            layout = FieldLayout(name, z)
-            for ci in range(len(field.cells)):
-                x, y = grid_position(ci, len(field.cells))
-                layout.cell_positions[(ci, 0)] = np.array([x, y, z])
-            self.layouts[name] = layout
-        z += LAYER_GAP
 
+    def _compute_layouts(self):
+        """Compute layouts using a hierarchy-based system.
+        
+        Fields at the same hierarchy level are displayed side by side.
+        Input fields are at level 0 (bottom). Column fields are placed at 
+        levels based on their distance from input fields.
+        """
+        # Build hierarchy levels for all fields
+        field_levels = self._compute_field_hierarchy()
+        
+        # Group fields by level
+        levels: dict[int, list[tuple[str, Any, bool]]] = {}  # level -> [(name, field, is_column)]
+        for name, field in self.brain._input_fields.items():
+            level = field_levels.get(name, 0)
+            if level not in levels:
+                levels[level] = []
+            levels[level].append((name, field, False))
+        
         for name, field in self.brain._column_fields.items():
-            layout = FieldLayout(name, z)
-            n_cols = len(field.columns)
-            for ci, col in enumerate(field.columns):
-                x, y = grid_position(ci, n_cols)
-                layout.column_positions[ci] = np.array([x, y, z])
-                for ji in range(len(col.cells)):
-                    layout.cell_positions[(ci, ji)] = np.array([x, y, z + ji * CELL_SPACING])
-            self.layouts[name] = layout
-            z += LAYER_GAP + len(field.columns[0].cells) * CELL_SPACING if field.columns else LAYER_GAP
+            level = field_levels.get(name, 1)
+            if level not in levels:
+                levels[level] = []
+            levels[level].append((name, field, True))
+        
+        # Calculate horizontal spacing for fields at each level
+        z = 0.0
+        max_level_height = 0.0
+        
+        for level in sorted(levels.keys()):
+            fields_at_level = levels[level]
+            num_fields = len(fields_at_level)
+            
+            # Calculate total width needed for all fields at this level
+            field_widths = []
+            for name, field, is_column in fields_at_level:
+                if is_column:
+                    n_cols = len(field.columns)
+                    cols = max(1, int(math.ceil(math.sqrt(n_cols))))
+                    width = cols * COLUMN_SPACING
+                else:
+                    n_cells = len(field.cells)
+                    cols = max(1, int(math.ceil(math.sqrt(n_cells))))
+                    width = cols * COLUMN_SPACING
+                field_widths.append(width)
+            
+            # Add spacing between fields
+            total_width = sum(field_widths) + (num_fields - 1) * LAYER_GAP
+            
+            # Position each field horizontally
+            x_offset = -total_width / 2
+            level_max_height = 0.0
+            
+            for i, (name, field, is_column) in enumerate(fields_at_level):
+                field_center_x = x_offset + field_widths[i] / 2
+                
+                if is_column:
+                    layout = FieldLayout(name, z)
+                    n_cols = len(field.columns)
+                    for ci, col in enumerate(field.columns):
+                        gx, gy = grid_position(ci, n_cols)
+                        x = field_center_x + gx
+                        y = gy
+                        layout.column_positions[ci] = np.array([x, y, z])
+                        for ji in range(len(col.cells)):
+                            layout.cell_positions[(ci, ji)] = np.array([x, y, z + ji * CELL_SPACING])
+                    self.layouts[name] = layout
+                    
+                    # Track height of this column field
+                    if field.columns:
+                        field_height = len(field.columns[0].cells) * CELL_SPACING
+                        level_max_height = max(level_max_height, field_height)
+                else:
+                    layout = FieldLayout(name, z)
+                    n_cells = len(field.cells)
+                    for ci in range(n_cells):
+                        gx, gy = grid_position(ci, n_cells)
+                        x = field_center_x + gx
+                        y = gy
+                        layout.cell_positions[(ci, 0)] = np.array([x, y, z])
+                    self.layouts[name] = layout
+                
+                x_offset += field_widths[i] + LAYER_GAP
+            
+            # Move z up for next level
+            z += LAYER_GAP + level_max_height
+    
+    def _compute_field_hierarchy(self) -> dict[str, int]:
+        """Compute hierarchy level for each field based on connections.
+        
+        Input fields with no incoming connections are at level 0.
+        Column fields are placed at 1 + max level of their input fields.
+        
+        Returns:
+            Dictionary mapping field names to their hierarchy level.
+        """
+        field_levels: dict[str, int] = {}
+        
+        # All standalone input fields start at level 0
+        for name in self.brain._input_fields:
+            field_levels[name] = 0
+        
+        # Column fields are at level 1 + max level of their inputs
+        # Process iteratively to handle chained dependencies
+        changed = True
+        while changed:
+            changed = False
+            for name, col_field in self.brain._column_fields.items():
+                # Find the max level of input fields
+                max_input_level = -1
+                for input_field in col_field.input_fields:
+                    # Find which field name this input_field corresponds to
+                    for input_name, named_field in self.brain._input_fields.items():
+                        if named_field is input_field:
+                            max_input_level = max(max_input_level, field_levels.get(input_name, 0))
+                            break
+                    # Also check column fields as inputs
+                    for col_name, named_col_field in self.brain._column_fields.items():
+                        if named_col_field is input_field:
+                            if col_name in field_levels:
+                                max_input_level = max(max_input_level, field_levels[col_name])
+                            break
+                
+                new_level = max_input_level + 1 if max_input_level >= 0 else 1
+                if name not in field_levels or field_levels[name] != new_level:
+                    field_levels[name] = new_level
+                    changed = True
+        
+        return field_levels
+
 
     def _build_cell_index(self):
         self._cell_id_to_pos.clear()
