@@ -365,6 +365,10 @@ class HTMVisualizer:
         self.brain_renderer.show_incoming_synapses = not self.brain_renderer.show_incoming_synapses
         self._update_display()
 
+    def toggle_inactive(self):
+        self.brain_renderer.hide_inactive = not self.brain_renderer.hide_inactive
+        self._update_display()
+
     def toggle_legend(self):
         self._show_legend = not self._show_legend
         self._update_legend()
@@ -436,6 +440,7 @@ class HTMVisualizer:
             "P           Proximal      \n"
             "O           Outgoing      \n"
             "I           Incoming      \n"
+            "A           Hide Inactive \n"
             "R           Reset camera  \n"
             "L           Legend        \n"
             "H           Shortcuts     \n"
@@ -510,6 +515,7 @@ class HTMVisualizer:
         lines.append(f"Proximal: {'ON' if self.show_proximal else 'OFF'}")
         lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
         lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
+        lines.append(f"Hide Inactive: {'ON' if self.brain_renderer.hide_inactive else 'OFF'}")
 
         # Field visibility status with letter shortcuts
         field_names = self.get_field_names()

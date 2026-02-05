@@ -65,6 +65,7 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("s", lambda: app.toggle_synapses())
     plotter.add_key_event("o", lambda: app.toggle_outgoing_synapses())
     plotter.add_key_event("i", lambda: app.toggle_incoming_synapses())
+    plotter.add_key_event("a", lambda: app.toggle_inactive())
     plotter.add_key_event("l", lambda: app.toggle_legend())
     plotter.add_key_event("h", lambda: app.toggle_shortcuts())
     plotter.add_key_event("Escape", lambda: app.clear_selection())
@@ -77,9 +78,9 @@ def setup_key_bindings(plotter, app):
 
 # Keys reserved by other shortcuts or PyVista
 RESERVED_KEYS = {
-    "r", "p", "s", "o", "i", "l", "h",  # Our shortcuts
-    "q", "e", "f", "v", "w", "c",       # Common PyVista keys
-    "3",                                  # PyVista stereo mode
+    "r", "p", "s", "o", "i", "l", "h", "a",  # Our shortcuts
+    "q", "e", "f", "v", "w", "c",            # Common PyVista keys
+    "3",                                       # PyVista stereo mode
 }
 
 

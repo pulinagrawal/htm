@@ -74,6 +74,7 @@ class BrainRenderer:
         self.show_outgoing_synapses = True
         self.show_incoming_synapses = True
         self.hidden_fields: set[str] = set()
+        self.hide_inactive = False
         self._compute_layouts()
         self._build_cell_index()
 
@@ -316,6 +317,11 @@ class BrainRenderer:
         colors = []
         for ci, col in enumerate(field.columns):
             for ji, cell in enumerate(col.cells):
+                # Skip inactive cells if hide_inactive is enabled
+                if self.hide_inactive:
+                    is_active = cell.active or cell.predictive or cell.winner or col.bursting
+                    if not is_active:
+                        continue
                 positions.append(layout.cell_positions[(ci, ji)])
                 colors.append(state_color(cell, col))
         if positions:
@@ -323,6 +329,8 @@ class BrainRenderer:
                 plotter, np.array(positions), np.array(colors, dtype=np.uint8),
                 CELL_RADIUS, f"cells_{name}",
             )
+        else:
+            self._add_empty_mesh(plotter, f"cells_{name}")
 
     def _render_segments_and_synapses(self, plotter, name, field, layout):
         seg_positions = []
@@ -387,18 +395,28 @@ class BrainRenderer:
                 
             base_color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
             dim_color = tuple(c // 4 for c in base_color)
-            points = np.array([layout.cell_positions[(ci, 0)] for ci in range(n)])
-            colors = np.zeros((n, 3), dtype=np.uint8)
+            
+            # Filter cells based on hide_inactive setting
+            points_list = []
+            colors_list = []
             for ci, cell in enumerate(field.cells):
+                is_active = cell.active or cell.predictive
+                if self.hide_inactive and not is_active:
+                    continue
+                points_list.append(layout.cell_positions[(ci, 0)])
                 if cell.predictive and cell.active:
-                    colors[ci] = COLORS["correct_prediction"]
+                    colors_list.append(COLORS["correct_prediction"])
                 elif cell.predictive:
-                    colors[ci] = COLORS["predictive"]
+                    colors_list.append(COLORS["predictive"])
                 elif cell.active:
-                    colors[ci] = base_color
+                    colors_list.append(base_color)
                 else:
-                    colors[ci] = dim_color
-            self._add_sphere_glyph(plotter, points, colors, INPUT_CELL_RADIUS, f"input_{name}")
+                    colors_list.append(dim_color)
+            
+            if points_list:
+                self._add_sphere_glyph(plotter, np.array(points_list), np.array(colors_list, dtype=np.uint8), INPUT_CELL_RADIUS, f"input_{name}")
+            else:
+                self._add_empty_mesh(plotter, f"input_{name}")
 
         for name, field in self.brain._column_fields.items():
             layout = self.layouts[name]
@@ -427,18 +445,28 @@ class BrainRenderer:
             dim_color = tuple(c // 4 for c in base_color)
             active_set = set(snapshot.input_active.get(name, []))
             pred_set = set(snapshot.input_predictive.get(name, []))
-            points = np.array([layout.cell_positions[(ci, 0)] for ci in range(n)])
-            colors = np.zeros((n, 3), dtype=np.uint8)
+            
+            # Filter cells based on hide_inactive setting
+            points_list = []
+            colors_list = []
             for ci in range(n):
+                is_active = ci in active_set or ci in pred_set
+                if self.hide_inactive and not is_active:
+                    continue
+                points_list.append(layout.cell_positions[(ci, 0)])
                 if ci in pred_set and ci in active_set:
-                    colors[ci] = COLORS["correct_prediction"]
+                    colors_list.append(COLORS["correct_prediction"])
                 elif ci in pred_set:
-                    colors[ci] = COLORS["predictive"]
+                    colors_list.append(COLORS["predictive"])
                 elif ci in active_set:
-                    colors[ci] = base_color
+                    colors_list.append(base_color)
                 else:
-                    colors[ci] = dim_color
-            self._add_sphere_glyph(plotter, points, colors, INPUT_CELL_RADIUS, f"input_{name}")
+                    colors_list.append(dim_color)
+            
+            if points_list:
+                self._add_sphere_glyph(plotter, np.array(points_list), np.array(colors_list, dtype=np.uint8), INPUT_CELL_RADIUS, f"input_{name}")
+            else:
+                self._add_empty_mesh(plotter, f"input_{name}")
 
         for name, field in self.brain._column_fields.items():
             layout = self.layouts[name]
@@ -459,8 +487,16 @@ class BrainRenderer:
             colors = []
             for ci, col in enumerate(field.columns):
                 for ji in range(len(col.cells)):
-                    positions.append(layout.cell_positions[(ci, ji)])
                     key = (ci, ji)
+                    # Check if cell is active in any state
+                    is_active = (
+                        key in active_set or key in pred_set or 
+                        key in winner_set or ci in burst_set
+                    )
+                    # Skip inactive cells if hide_inactive is enabled
+                    if self.hide_inactive and not is_active:
+                        continue
+                    positions.append(layout.cell_positions[(ci, ji)])
                     if ci in burst_set and key in active_set:
                         color = COLORS["bursting"]
                     elif key in pred_set and key in active_set:
@@ -480,6 +516,8 @@ class BrainRenderer:
                     np.array(colors, dtype=np.uint8),
                     CELL_RADIUS, f"cells_{name}",
                 )
+            else:
+                self._add_empty_mesh(plotter, f"cells_{name}")
             self._render_segments_and_synapses(plotter, name, field, layout)
 
     # ------------------------------------------------------------------
