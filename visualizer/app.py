@@ -1,6 +1,6 @@
 """Main HTM Visualizer application."""
 
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import pyvista as pv
@@ -34,12 +34,15 @@ class HTMVisualizer:
         ESC         Clear selection
     """
 
-    def __init__(self, brain, input_sequence: list[dict[str, Any]] | None = None,
+    def __init__(self, brain, input_sequence: Iterable[dict[str, Any]] | None = None,
                  step_fn: Callable | None = None, title: str = "HTM Visualizer"):
         self.brain = brain
-        self.input_sequence = input_sequence or []
         self.step_fn = step_fn
         self.title = title
+
+        # Support both lists and generators/iterables via unified iterator + cache
+        self._input_iter = iter(input_sequence) if input_sequence else None
+        self._input_cache: list[dict[str, Any]] = []
 
         self.timestep = 0
         self.history = History(max_size=1000)
@@ -108,15 +111,29 @@ class HTMVisualizer:
     # Stepping
     # ------------------------------------------------------------------
 
+    def _get_input_at(self, index: int) -> dict[str, Any] | None:
+        """Get input at the given index, fetching from iterator if needed."""
+        # Fetch items from iterator until we have enough cached
+        while self._input_iter and len(self._input_cache) <= index:
+            try:
+                self._input_cache.append(next(self._input_iter))
+            except StopIteration:
+                self._input_iter = None
+                break
+        
+        if not self._input_cache:
+            return None
+        
+        # Return from cache, looping if index exceeds available items
+        return self._input_cache[index % len(self._input_cache)]
+
     def _do_step(self):
         if self.step_fn:
             inputs = self.step_fn(self.timestep)
-        elif self.timestep < len(self.input_sequence):
-            inputs = self.input_sequence[self.timestep]
-        elif self.input_sequence:
-            inputs = self.input_sequence[self.timestep % len(self.input_sequence)]
         else:
-            return
+            inputs = self._get_input_at(self.timestep)
+            if inputs is None:
+                return
 
         try:
             predictions = self.brain.prediction()

@@ -14,14 +14,14 @@ from encoder_layer.date_encoder import DateEncoderParameters
 config = {
     "num_columns": 1024,
     "cells_per_column": 32,
-    "resolution": .5,
+    "radius": .5,
     "rdse_seed": 5,
 }
 
 params = RDSEParameters(
     size=config["num_columns"],
     sparsity=0.02,
-    resolution=config["resolution"],
+    radius=config["radius"],
     category=False,
     seed=config["rdse_seed"],
 )
@@ -69,25 +69,7 @@ predicted_values = []
 
 viz = HTMVisualizer(
     brain,
-    input_sequence=list(generate_input_sequence()),
+    input_sequence=generate_input_sequence(),
     title="Hot Gym Energy Consumption HTM Visualizer",
 )
 viz.run()
-
-# mean abs error of predictions
-mae = sum(errors[1:]) / len(errors[1:])
-print("Error values:", errors)
-print("Mean Absolute Error of predictions:", mae)
-print("Evaluation bursting columns:", evaluation_bursts)
-
-# Plot actual vs predicted values
-plt.figure(figsize=(14, 6))
-plt.plot(actual_values, label='Actual', alpha=0.8)
-plt.plot(predicted_values, label='Predicted', alpha=0.8)
-plt.xlabel('Time Step')
-plt.ylabel('kW Energy Consumption')
-plt.title('HTM Predictions vs Actual Values')
-plt.legend()
-plt.tight_layout()
-plt.savefig('plots/actual_vs_predicted.png', dpi=150)
-plt.show()
