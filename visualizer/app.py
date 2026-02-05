@@ -54,6 +54,9 @@ class HTMVisualizer:
         self._show_legend = False
         self._show_shortcuts = False
 
+        # Field visibility - set of field names that are hidden
+        self.hidden_fields: set[str] = set()
+
         # Metric tracking
         self.burst_history: list[int] = []
         self.error_history: list[float] = []
@@ -370,6 +373,38 @@ class HTMVisualizer:
         self._update_shortcuts()
         self.plotter.render()
 
+    def toggle_field(self, field_name: str):
+        """Toggle visibility of a specific field."""
+        if field_name in self.hidden_fields:
+            self.hidden_fields.remove(field_name)
+        else:
+            self.hidden_fields.add(field_name)
+        self.brain_renderer.set_hidden_fields(self.hidden_fields)
+        self._update_display()
+
+    def get_field_names(self) -> list[str]:
+        """Return list of all field names."""
+        return list(self.brain._input_fields.keys()) + list(self.brain._column_fields.keys())
+
+    def cycle_field_visibility(self):
+        """Cycle through fields to toggle visibility (for quick keyboard access)."""
+        field_names = self.get_field_names()
+        if not field_names:
+            return
+        # Find first visible field and hide it, or show all if all hidden
+        visible = [f for f in field_names if f not in self.hidden_fields]
+        if len(visible) == len(field_names):
+            # All visible - hide the first one
+            self.toggle_field(field_names[0])
+        elif len(visible) == 0:
+            # All hidden - show all
+            self.hidden_fields.clear()
+            self.brain_renderer.set_hidden_fields(self.hidden_fields)
+            self._update_display()
+        else:
+            # Some hidden - hide next visible one
+            self.toggle_field(visible[0])
+
     # ------------------------------------------------------------------
     # UI elements
     # ------------------------------------------------------------------
@@ -413,6 +448,7 @@ class HTMVisualizer:
             "R           Reset camera  \n"
             "L           Legend        \n"
             "H           Shortcuts     \n"
+            "1-9         Toggle fields \n"
             "[  ]        Sel history   \n"
             "Click       Select        \n"
             "Shift+Click Multi-select  \n"
@@ -484,6 +520,15 @@ class HTMVisualizer:
         lines.append(f"Proximal: {'ON' if self.show_proximal else 'OFF'}")
         lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
         lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
+
+        # Field visibility status
+        field_names = self.get_field_names()
+        if field_names:
+            lines.append("\nFields (1-9 toggle):")
+            for i, name in enumerate(field_names[:9]):
+                visible = "✓" if name not in self.hidden_fields else "✗"
+                lines.append(f"  {i+1}: {name} [{visible}]")
+
         return "\n".join(lines)
 
     def _add_widgets(self):

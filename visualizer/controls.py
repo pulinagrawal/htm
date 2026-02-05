@@ -70,3 +70,14 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("Escape", lambda: app.clear_selection())
     plotter.add_key_event("bracketleft", lambda: app.selection_back())
     plotter.add_key_event("bracketright", lambda: app.selection_forward())
+
+    # Number keys 1-9 toggle visibility of fields by index
+    def make_field_toggle(idx):
+        def toggle():
+            fields = app.get_field_names()
+            if idx < len(fields):
+                app.toggle_field(fields[idx])
+        return toggle
+
+    for i in range(9):
+        plotter.add_key_event(str(i + 1), make_field_toggle(i))

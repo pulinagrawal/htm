@@ -73,6 +73,7 @@ class BrainRenderer:
         self.show_synapses = True
         self.show_outgoing_synapses = True
         self.show_incoming_synapses = True
+        self.hidden_fields: set[str] = set()
         self._compute_layouts()
         self._build_cell_index()
 
@@ -110,6 +111,14 @@ class BrainRenderer:
     def get_cell_position(self, field_name: str, col_idx: int, cell_idx: int = 0) -> np.ndarray:
         return self.layouts[field_name].cell_positions.get((col_idx, cell_idx), np.zeros(3))
 
+    def set_hidden_fields(self, hidden: set[str]):
+        """Update the set of hidden field names."""
+        self.hidden_fields = hidden
+
+    def is_field_visible(self, field_name: str) -> bool:
+        """Check if a field should be rendered."""
+        return field_name not in self.hidden_fields
+
     # ------------------------------------------------------------------
     # Initial render
     # ------------------------------------------------------------------
@@ -128,6 +137,19 @@ class BrainRenderer:
         n = len(field.cells)
         if n == 0:
             return
+        
+        # If field is hidden, render empty meshes
+        if not self.is_field_visible(name):
+            self._add_empty_mesh(plotter, f"input_{name}")
+            # Hide label by using empty string
+            label_pos = np.mean([layout.cell_positions[(i, 0)] for i in range(n)], axis=0) + np.array([0, 0, 1.0])
+            plotter.add_point_labels(
+                [label_pos], [""],
+                font_size=14, text_color=color_to_float(LABEL_COLOR),
+                shape=None, show_points=False, name=f"label_{name}",
+            )
+            return
+            
         points = np.array([layout.cell_positions[(i, 0)] for i in range(n)])
         colors = np.zeros((n, 3), dtype=np.uint8)
         dim_color = tuple(c // 4 for c in base_color)
@@ -143,6 +165,27 @@ class BrainRenderer:
         )
 
     def _render_column_field(self, plotter, name, field, layout):
+        # If field is hidden, render empty meshes
+        if not self.is_field_visible(name):
+            self._add_empty_mesh(plotter, f"cells_{name}")
+            self._add_empty_mesh(plotter, f"segments_{name}")
+            self._add_empty_mesh(plotter, f"synapses_{name}")
+            # Hide label
+            if field.columns:
+                all_z = [layout.cell_positions[(ci, ji)][2]
+                         for ci in range(len(field.columns))
+                         for ji in range(len(field.columns[0].cells))]
+                center_xy = np.mean(
+                    [layout.cell_positions[(ci, 0)][:2] for ci in range(len(field.columns))], axis=0
+                )
+                plotter.add_point_labels(
+                    [np.array([center_xy[0], center_xy[1], max(all_z) + 1.5])],
+                    [""],
+                    font_size=16, text_color=color_to_float(LABEL_COLOR),
+                    shape=None, show_points=False, name=f"label_{name}",
+                )
+            return
+            
         self._render_cells(plotter, name, field, layout)
         self._render_segments_and_synapses(plotter, name, field, layout)
         # Label
@@ -228,6 +271,12 @@ class BrainRenderer:
             n = len(field.cells)
             if n == 0:
                 continue
+            
+            # Handle hidden fields
+            if not self.is_field_visible(name):
+                self._add_empty_mesh(plotter, f"input_{name}")
+                continue
+                
             base_color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
             dim_color = tuple(c // 4 for c in base_color)
             points = np.array([layout.cell_positions[(ci, 0)] for ci in range(n)])
@@ -245,6 +294,12 @@ class BrainRenderer:
 
         for name, field in self.brain._column_fields.items():
             layout = self.layouts[name]
+            # Handle hidden fields
+            if not self.is_field_visible(name):
+                self._add_empty_mesh(plotter, f"cells_{name}")
+                self._add_empty_mesh(plotter, f"segments_{name}")
+                self._add_empty_mesh(plotter, f"synapses_{name}")
+                continue
             self._render_cells(plotter, name, field, layout)
             self._render_segments_and_synapses(plotter, name, field, layout)
 
@@ -254,6 +309,12 @@ class BrainRenderer:
             n = len(field.cells)
             if n == 0:
                 continue
+            
+            # Handle hidden fields
+            if not self.is_field_visible(name):
+                self._add_empty_mesh(plotter, f"input_{name}")
+                continue
+                
             base_color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
             dim_color = tuple(c // 4 for c in base_color)
             active_set = set(snapshot.input_active.get(name, []))
@@ -273,6 +334,14 @@ class BrainRenderer:
 
         for name, field in self.brain._column_fields.items():
             layout = self.layouts[name]
+            
+            # Handle hidden fields
+            if not self.is_field_visible(name):
+                self._add_empty_mesh(plotter, f"cells_{name}")
+                self._add_empty_mesh(plotter, f"segments_{name}")
+                self._add_empty_mesh(plotter, f"synapses_{name}")
+                continue
+                
             active_set = set(snapshot.column_active_cells.get(name, []))
             winner_set = set(snapshot.column_winner_cells.get(name, []))
             pred_set = set(snapshot.column_predictive_cells.get(name, []))
