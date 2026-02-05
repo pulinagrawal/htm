@@ -18,9 +18,10 @@ class ConnectionRenderer:
         self.br = brain_renderer
         self.brain = brain_renderer.brain
         self._actors: dict[str, object] = {}
+        self.show_all_potential = True  # Show potential synapses, not just connected
 
     def render_proximal(self, plotter: pv.Plotter, column_field_name: str,
-                        active_only: bool = True, max_connections: int = 2000):
+                        active_only: bool = True, max_connections: int = 50000):
         """Render proximal connections from input cells to column bases."""
         field = self.brain._column_fields.get(column_field_name)
         if not field:
@@ -37,16 +38,20 @@ class ConnectionRenderer:
             if col_pos is None:
                 continue
 
-            for syn in getattr(col, 'connected_synapses', []):
+            # Use potential_synapses if show_all_potential, otherwise only connected
+            synapses = getattr(col, 'potential_synapses', []) if self.show_all_potential else getattr(col, 'connected_synapses', [])
+            for syn in synapses:
                 src_pos = self.br._cell_id_to_pos.get(id(syn.source_cell))
                 if src_pos is not None:
                     starts.append(src_pos)
                     ends.append(col_pos)
                     colors.append(permanence_color(syn.permanence))
-                    if len(starts) >= max_connections:
-                        break
-            if len(starts) >= max_connections:
-                break
+
+        # Truncate if too many connections (for performance)
+        if len(starts) > max_connections:
+            starts = starts[:max_connections]
+            ends = ends[:max_connections]
+            colors = colors[:max_connections]
 
         actor_name = f"proximal_{column_field_name}"
         if not starts:

@@ -150,7 +150,7 @@ class HTMVisualizer:
         self.conn_renderer.clear(self.plotter)
         if self.show_proximal:
             for name in self.brain._column_fields:
-                self.conn_renderer.render_proximal(self.plotter, name)
+                self.conn_renderer.render_proximal(self.plotter, name, active_only=False)
 
         # Selection highlights + synapse tracing
         self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
