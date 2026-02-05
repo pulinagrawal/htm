@@ -176,6 +176,17 @@ class HTMVisualizer:
                 self._update_stats_overlay()
                 self.plotter.render()
 
+    def _step_forward_history(self):
+        if self.history.can_step_forward:
+            self.history.step_forward()
+            snap = self.history.current
+            if snap:
+                self.brain_renderer.update_from_snapshot(self.plotter, snap)
+                self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
+                self.conn_renderer.render_proximal_for_selection(self.plotter, self._selections)
+                self._update_stats_overlay()
+                self.plotter.render()
+
     # ------------------------------------------------------------------
     # Selection (picking)
     # ------------------------------------------------------------------
@@ -344,8 +355,13 @@ class HTMVisualizer:
         self.playback.toggle_play(self.plotter)
 
     def step_forward(self):
-        self._do_step()
-        self._update_display()
+        # First try to step forward in history if we've stepped back
+        if self.history.can_step_forward:
+            self._step_forward_history()
+        else:
+            # Only run a new simulation step if at end of history
+            self._do_step()
+            self._update_display()
 
     def step_back(self):
         self._step_back_history()
