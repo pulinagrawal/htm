@@ -22,13 +22,14 @@ SEGMENT_COLORS = {
 }
 
 # Input field colors for multiple input fields
+# Note: Avoid red (255, 50, 0) as it's used for bursting cells
 INPUT_FIELD_COLORS = [
-    (255, 0, 0),      # Red
+    (0, 200, 255),     # Cyan-blue
     (0, 255, 0),       # Green
-    (0, 100, 255),     # Blue
-    (255, 255, 0),     # Yellow
+    (255, 200, 0),     # Orange-yellow
     (255, 0, 255),     # Magenta
-    (0, 255, 255),     # Cyan
+    (100, 255, 100),   # Light green
+    (255, 150, 150),   # Light pink
 ]
 
 # UI colors
