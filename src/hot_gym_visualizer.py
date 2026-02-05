@@ -29,10 +29,10 @@ consumption_field = InputField(encoder_params=params)
 
 date_params = DateEncoderParameters(
     day_of_week_radius=1,
-    day_of_week_width=100,
+    day_of_week_size=100,
     time_of_day_radius=1,
-    time_of_day_width=100,
-    weekend_width=20, 
+    time_of_day_size=100,
+    weekend_size=20, 
 )
 date_field = InputField(encoder_params=date_params)
 column_field = ColumnField(
