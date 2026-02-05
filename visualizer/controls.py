@@ -71,13 +71,41 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("bracketleft", lambda: app.selection_back())
     plotter.add_key_event("bracketright", lambda: app.selection_forward())
 
-    # Number keys 1-9 toggle visibility of fields by index
-    def make_field_toggle(idx):
-        def toggle():
-            fields = app.get_field_names()
-            if idx < len(fields):
-                app.toggle_field(fields[idx])
-        return toggle
+    # Setup field visibility toggles using first available letter from field name
+    _setup_field_key_bindings(plotter, app)
 
-    for i in range(9):
-        plotter.add_key_event(str(i + 1), make_field_toggle(i))
+
+# Keys reserved by other shortcuts or PyVista
+RESERVED_KEYS = {
+    "r", "p", "s", "o", "i", "l", "h",  # Our shortcuts
+    "q", "e", "f", "v", "w", "c",       # Common PyVista keys
+    "3",                                  # PyVista stereo mode
+}
+
+
+def _setup_field_key_bindings(plotter, app):
+    """Assign letter shortcuts to fields based on their names."""
+    field_names = app.get_field_names()
+    used_keys: set[str] = set(RESERVED_KEYS)
+    field_keys: dict[str, str] = {}  # key -> field_name
+
+    for field_name in field_names:
+        # Find first available letter from the field name
+        assigned_key = None
+        for char in field_name.lower():
+            if char.isalpha() and char not in used_keys:
+                assigned_key = char
+                used_keys.add(char)
+                break
+
+        if assigned_key:
+            field_keys[assigned_key] = field_name
+
+            # Create closure properly
+            def make_toggle(fname):
+                return lambda: app.toggle_field(fname)
+
+            plotter.add_key_event(assigned_key, make_toggle(field_name))
+
+    # Store the mapping in the app for display purposes
+    app.set_field_keys(field_keys)

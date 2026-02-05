@@ -141,7 +141,6 @@ class BrainRenderer:
         # If field is hidden, render empty meshes
         if not self.is_field_visible(name):
             self._add_empty_mesh(plotter, f"input_{name}")
-            # Hide label by using empty string
             label_pos = np.mean([layout.cell_positions[(i, 0)] for i in range(n)], axis=0) + np.array([0, 0, 1.0])
             plotter.add_point_labels(
                 [label_pos], [""],
@@ -170,7 +169,6 @@ class BrainRenderer:
             self._add_empty_mesh(plotter, f"cells_{name}")
             self._add_empty_mesh(plotter, f"segments_{name}")
             self._add_empty_mesh(plotter, f"synapses_{name}")
-            # Hide label
             if field.columns:
                 all_z = [layout.cell_positions[(ci, ji)][2]
                          for ci in range(len(field.columns))

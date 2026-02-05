@@ -56,6 +56,8 @@ class HTMVisualizer:
 
         # Field visibility - set of field names that are hidden
         self.hidden_fields: set[str] = set()
+        # Mapping of key -> field name for toggle shortcuts
+        self._field_keys: dict[str, str] = {}
 
         # Metric tracking
         self.burst_history: list[int] = []
@@ -386,24 +388,13 @@ class HTMVisualizer:
         """Return list of all field names."""
         return list(self.brain._input_fields.keys()) + list(self.brain._column_fields.keys())
 
-    def cycle_field_visibility(self):
-        """Cycle through fields to toggle visibility (for quick keyboard access)."""
-        field_names = self.get_field_names()
-        if not field_names:
-            return
-        # Find first visible field and hide it, or show all if all hidden
-        visible = [f for f in field_names if f not in self.hidden_fields]
-        if len(visible) == len(field_names):
-            # All visible - hide the first one
-            self.toggle_field(field_names[0])
-        elif len(visible) == 0:
-            # All hidden - show all
-            self.hidden_fields.clear()
-            self.brain_renderer.set_hidden_fields(self.hidden_fields)
-            self._update_display()
-        else:
-            # Some hidden - hide next visible one
-            self.toggle_field(visible[0])
+    def get_field_keys(self) -> dict[str, str]:
+        """Return mapping of shortcut key -> field name."""
+        return self._field_keys
+
+    def set_field_keys(self, mapping: dict[str, str]):
+        """Set the field key mapping."""
+        self._field_keys = mapping
 
     # ------------------------------------------------------------------
     # UI elements
@@ -448,7 +439,6 @@ class HTMVisualizer:
             "R           Reset camera  \n"
             "L           Legend        \n"
             "H           Shortcuts     \n"
-            "1-9         Toggle fields \n"
             "[  ]        Sel history   \n"
             "Click       Select        \n"
             "Shift+Click Multi-select  \n"
@@ -521,15 +511,30 @@ class HTMVisualizer:
         lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
         lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
 
-        # Field visibility status
+        # Field visibility status with letter shortcuts
         field_names = self.get_field_names()
         if field_names:
-            lines.append("\nFields (1-9 toggle):")
-            for i, name in enumerate(field_names[:9]):
+            # Build reverse mapping: field_name -> key
+            key_for_field = {v: k for k, v in self._field_keys.items()}
+            lines.append("\nFields:")
+            for name in field_names:
                 visible = "✓" if name not in self.hidden_fields else "✗"
-                lines.append(f"  {i+1}: {name} [{visible}]")
+                key = key_for_field.get(name, "?")
+                # Highlight the shortcut letter in the field name
+                display_name = self._highlight_key_in_name(name, key)
+                lines.append(f"  [{key.upper()}] {display_name} [{visible}]")
 
         return "\n".join(lines)
+
+    def _highlight_key_in_name(self, name: str, key: str) -> str:
+        """Return the field name with the shortcut key highlighted."""
+        # Find where the key appears in the name (case-insensitive)
+        lower_name = name.lower()
+        idx = lower_name.find(key.lower())
+        if idx >= 0:
+            # Wrap that character in brackets to highlight it
+            return name[:idx] + "[" + name[idx] + "]" + name[idx+1:]
+        return name
 
     def _add_widgets(self):
         def speed_callback(value):
