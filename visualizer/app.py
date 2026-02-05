@@ -24,7 +24,10 @@ class HTMVisualizer:
         RIGHT       Step forward
         LEFT        Step back in history
         S           Toggle synapse line visibility
-        P           Toggle proximal connection visibility
+        P           Toggle proximal connection visibility (all columns)
+        X           Toggle proximal synapses for selected column
+        O           Toggle outgoing distal synapses for selection
+        I           Toggle incoming distal synapses for selection
         R           Reset camera
         Click       Select element (cell / segment / input cell)
         Shift+Click Add element to multi-selection
@@ -152,8 +155,11 @@ class HTMVisualizer:
             for name in self.brain._column_fields:
                 self.conn_renderer.render_proximal(self.plotter, name, active_only=False)
 
-        # Selection highlights + synapse tracing
+        # Selection highlights + synapse tracing (distal)
         self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
+        
+        # Proximal synapses for selected columns
+        self.conn_renderer.render_proximal_for_selection(self.plotter, self._selections)
 
         self._update_stats_overlay()
         self._update_selection_overlay()
@@ -166,6 +172,7 @@ class HTMVisualizer:
             if snap:
                 self.brain_renderer.update_from_snapshot(self.plotter, snap)
                 self.brain_renderer.render_selection_highlights(self.plotter, self._selections)
+                self.conn_renderer.render_proximal_for_selection(self.plotter, self._selections)
                 self._update_stats_overlay()
                 self.plotter.render()
 
@@ -353,6 +360,11 @@ class HTMVisualizer:
         self.show_proximal = not self.show_proximal
         self._update_display()
 
+    def toggle_proximal_synapses(self):
+        """Toggle visibility of proximal synapses for selected columns."""
+        self.conn_renderer.show_proximal_synapses = not self.conn_renderer.show_proximal_synapses
+        self._update_display()
+
     def toggle_synapses(self):
         self.brain_renderer.show_synapses = not self.brain_renderer.show_synapses
         self._update_display()
@@ -437,7 +449,8 @@ class HTMVisualizer:
             "SPACE       Play/Pause    \n"
             "Arrow       Step fwd/back \n"
             "S           Synapses      \n"
-            "P           Proximal      \n"
+            "P           Proximal(all) \n"
+            "X           Proximal(sel) \n"
             "O           Outgoing      \n"
             "I           Incoming      \n"
             "A           Hide Inactive \n"
@@ -512,7 +525,8 @@ class HTMVisualizer:
 
         lines.append(f"\nHistory: {self.history._position + 1}/{len(self.history)}")
         lines.append(f"Synapses: {'ON' if self.brain_renderer.show_synapses else 'OFF'}")
-        lines.append(f"Proximal: {'ON' if self.show_proximal else 'OFF'}")
+        lines.append(f"Proximal (all): {'ON' if self.show_proximal else 'OFF'}")
+        lines.append(f"Proximal (sel): {'ON' if self.conn_renderer.show_proximal_synapses else 'OFF'}")
         lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
         lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
         lines.append(f"Hide Inactive: {'ON' if self.brain_renderer.hide_inactive else 'OFF'}")
