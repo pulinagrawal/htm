@@ -343,6 +343,11 @@ class BrainRenderer:
             for ji, cell in enumerate(col.cells):
                 if not cell.segments:
                     continue
+                # Skip inactive cells' segments if hide_inactive is enabled
+                if self.hide_inactive:
+                    is_active = cell.active or cell.predictive or cell.winner or col.bursting
+                    if not is_active:
+                        continue
                 cell_pos = layout.cell_positions[(ci, ji)]
                 n_segs = len(cell.segments)
                 for si, seg in enumerate(cell.segments):
