@@ -5,9 +5,14 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "matplotlib>=3.10.8",
+    "mmh3>=5.2.0",
     "numpy>=2.1.0",
     "plotly>=5.22.0",
     "pytest>=9.0.2",
+    "pyvista>=0.46.5",
+    "pyvistaqt>=0.11.3",
     "scalene>=2.0.1",
     "streamlit>=1.39.0",
+    "tqdm>=4.67.1",
 ]
