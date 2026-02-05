@@ -1,3 +1,4 @@
+from idna import decode
 import pandas as pd
 import matplotlib.pyplot as plt
 from datetime import datetime
@@ -7,6 +8,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from tqdm import tqdm
 from src.HTM import ColumnField, InputField
 from encoder_layer.rdse import RDSEParameters
+
 from encoder_layer.date_encoder import DateEncoderParameters    
 
 config = {
@@ -20,20 +22,19 @@ params = RDSEParameters(
     size=config["num_columns"],
     sparsity=0.02,
     resolution=config["resolution"],
-    category=False,
     seed=config["rdse_seed"],
 )
 consumption_field = InputField(encoder_params=params)
 
 date_params = DateEncoderParameters(
     day_of_week_radius=1,
-    day_of_week_width=10,
+    day_of_week_size=100,
     time_of_day_radius=1,
-    time_of_day_width=10,
+    time_of_day_size=100,
 )
 date_field = InputField(encoder_params=date_params)
 column_field = ColumnField(
-    input_fields=[consumption_field, date_field],
+    input_fields=[consumption_field], # add date_field to input fields for date encoding
     non_spatial=True,
     num_columns=config["num_columns"],
     cells_per_column=config["cells_per_column"],
@@ -51,7 +52,7 @@ burst_counts = []
 
 for idx in tqdm(range(len(df)-500)):
     date = df["datetime"].iloc[idx]
-    date_field.encode(date)
+    # date_field.encode(date)
     consumption_field.encode(df["kw_energy_consumption"].iloc[idx])
     column_field.compute()
     burst_counts.append(len(column_field.bursting_columns))
@@ -64,6 +65,7 @@ evaluation_bursts = []
 errors = []
 actual_values = []
 predicted_values = []
+decode_map = []
 
 for idx in tqdm(range(500)):
     index = (len(df)-500)+idx
@@ -71,6 +73,7 @@ for idx in tqdm(range(500)):
     value = df["kw_energy_consumption"].iloc[index]
     date_field.encode(date)
     prediction, confidence = consumption_field.decode('predictive')
+    decode_map.append((prediction, consumption_field.bit_vector))
     errors.append(abs(value - prediction))
     actual_values.append(value)
     predicted_values.append(prediction)
@@ -83,6 +86,7 @@ for idx in tqdm(range(500)):
 mae = sum(errors[1:]) / len(errors[1:])
 print("Error values:", errors)
 print("Mean Absolute Error of predictions:", mae)
+print("Predicted values:", predicted_values)
 print("Evaluation bursting columns:", evaluation_bursts)
 
 # Plot actual vs predicted values

@@ -11,27 +11,17 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from encoder_layer.base_encoder import BaseEncoder
 
-"""
- * Parameters for the RandomDistributedScalarEncoder (RDSE)
- *
- * Members "activeBits" & "sparsity" are mutually exclusive, specify exactly one
- * of them.
- *
- * Members "radius", "resolution", & "category" are mutually exclusive, specify
- * exactly one of them.
-"""
+"""Parameters for the RandomDistributedScalarEncoder (RDSE).
 
+Members "activeBits" and "sparsity" are mutually exclusive; specify exactly one.
+Members "radius", "resolution", and "category" are mutually exclusive; specify exactly one.
 
+Encodes a real number as a set of randomly generated activations.
 
-"""
- * Encodes a real number as a set of randomly generated activations.
- *
- * Description:
- * The RandomDistributedScalarEncoder (RDSE) encodes a numeric scalar (floating
- * point) value into an SDR.  The RDSE is more flexible than the ScalarEncoder.
- * This encoder does not need to know the minimum and maximum of the input
- * range.  It does not assign an input->output mapping at construction.  Instead
- * the encoding is determined at runtime.
+The RDSE encodes a numeric scalar (floating point) value into an SDR. The RDSE
+is more flexible than the ScalarEncoder. This encoder does not need to know the
+minimum and maximum of the input range. It does not assign an input-to-output
+mapping at construction. Instead the encoding is determined at runtime.
 """
 
 
@@ -53,10 +43,15 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
 
         super().__init__(dimensions, self._size)
 
-    """
-    Encodes an input value into an SDR with a random distributed scalar encoder.
-    We employ the murmur hashing.
-    """
+    @property
+    def size(self) -> int:
+        """Total number of bits in the encoded output SDR."""
+        return self._size
+
+    @property
+    def sparsity(self) -> float:
+        """Fraction of bits in the encoded output which this encoder will activate."""
+        return self._sparsity
 
     @override
     def encode(self, input_value: float) -> List[int]:
@@ -114,22 +109,8 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
         for offset in range(self._active_bits):
             hash_buffer = index + offset
 
-            """
-                The lower case i in the struct.pack makes this take in signed 32 bit integers.
-                It is important to note the previous iteration used an upper case I which
-                made this not take negative values. The struct.pack converts an integer
-                into a byte representation.
-            """
             bucket = mmh3.hash(struct.pack("i", hash_buffer), self._seed, signed=False)
             bucket = bucket % self.size
-            """
-                Don't worry about hash collisions.  Instead measure the critical
-                properties of the encoder in unit tests and quantify how significant
-                the hash collisions are.  This encoder can not fix the collisions
-                because it does not record past encodings.  Collisions cause small
-                deviations in the sparsity or semantic similarity, depending on how
-                they're handled.
-            """
             data[bucket] = 1
         return data
 
@@ -190,52 +171,41 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
         return args
 
 def sparsify(vector: List[int]) -> List[int]:
-    """Converts a sparse activity vector to a activation list."""
+    """Converts a binary vector to a list of active bit indices."""
     return [i for i, bit in enumerate(vector) if bit == 1]
 
 @dataclass
 class RDSEParameters:
 
     size: int = 0
-    """
-    * Member "size" is the total number of bits in the encoded output SDR.
-    """
+    """Total number of bits in the encoded output SDR."""
+
     active_bits: int = 0
-    """
-    * Member "activeBits" is the number of true bits in the encoded output SDR.
-    """
+    """Number of true bits in the encoded output SDR."""
+
     sparsity: float = 0
-    """
-    * Member "sparsity" is the fraction of bits in the encoded output which this
-    * encoder will activate. This is an alternative way to specify the member
-    * "activeBits".
-    """
+    """Fraction of bits in the encoded output which this encoder will activate.
+    This is an alternative way to specify active_bits."""
+
     radius: float = 0
-    """
-    * Member "radius" Two inputs separated by more than the radius have
-    * non-overlapping representations. Two inputs separated by less than the
-    * radius will in general overlap in at least some of their bits. You can
-    * think of this as the radius of the input.
-    """
+    """Two inputs separated by more than the radius have non-overlapping
+    representations. Two inputs separated by less than the radius will in
+    general overlap in at least some of their bits."""
+
     resolution: float = 0
-    """
-    * Member "resolution" Two inputs separated by greater than, or equal to the
-    * resolution will in general have different representations.
-    """
+    """Two inputs separated by greater than or equal to the resolution will
+    in general have different representations."""
+
     category: bool = False
-    """
-    * Member "category" means that the inputs are enumerated categories.
-    * If true then this encoder will only encode unsigned integers, and all
-    * inputs will have unique / non-overlapping representations.
-    """
+    """If true, inputs are enumerated categories. The encoder will only encode
+    unsigned integers, and all inputs will have unique, non-overlapping
+    representations."""
+
     seed: int = 0
-    """
-    * Member "seed" forces different encoders to produce different outputs, even
-    * if the inputs and all other parameters are the same.  Two encoders with the
-    * same seed, parameters, and input will produce identical outputs.
-    *
-    * The seed 0 is special.  Seed 0 is replaced with a random number.
-    """
+    """Forces different encoders to produce different outputs, even if the
+    inputs and all other parameters are the same. Two encoders with the same
+    seed, parameters, and input will produce identical outputs.
+    The seed 0 is special and is replaced with a random number."""
     encoder_class = RandomDistributedScalarEncoder
 
 if __name__ == "__main__":

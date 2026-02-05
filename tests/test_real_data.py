@@ -3,8 +3,12 @@ import unittest
 
 import numpy as np
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+
 from src.HTM import InputField, ColumnField
-from encoder_layer.rdse import RDSEParameters
+from src.encoder_layer.rdse import RDSEParameters
 
 class TestRealData(unittest.TestCase):
 

@@ -65,6 +65,26 @@ def test_clear_registered_encodings_resets_cache():
 
     with pytest.raises(ValueError):
         encoder.decode(encoder.encode(0.25))
+
+
+def test_rdse_overlap_within_radius_large_encoding():
+    encoder = _make_large_encoder(radius=1.0)
+    values = [i * 0.1 for i in range(200)]
+    for value in values:
+        within = value + 0.4
+        overlap = _overlap_count(encoder.encode(value), encoder.encode(within))
+        assert overlap > 0
+
+
+def test_rdse_no_overlap_outside_radius_large_encoding():
+    encoder = _make_large_encoder(radius=1.0)
+    values = [i for i in range(200)]
+    for value in values:
+        outside = value + 5.0
+        overlap = _overlap_count(encoder.encode(value), encoder.encode(outside))
+        assert overlap < 5
+
+
 def test_rdse_encodings_are_mostly_orthogonal():
     encoder = _make_large_encoder(radius=1.0)
 

@@ -87,7 +87,7 @@ class Field:
 
     @property
     def active_cells(self) -> Set['Cell']:
-        """Return set of previously active cells in the field."""
+        """Return set of currently active cells in the field."""
         return {cell for cell in self.cells if cell.active}
 
     @property
@@ -97,7 +97,7 @@ class Field:
 
     @property
     def predictive_cells(self) -> Set['Cell']:
-        """Return set of previously active cells in the field."""
+        """Return set of currently predictive cells in the field."""
         return {cell for cell in self.cells if cell.predictive}
 
     @property
@@ -404,7 +404,7 @@ class Column(Active, Predictive, Bursting):
       self._update_connected_synapses()
     
     def best_potential_prev_active_segment(self) -> Optional[Segment]:
-        """Return the segment with the most active synapses."""
+        """Return the previously matching segment with the most previously active potential synapses."""
         best_segment = None
         best_score = -1
         for segment in self.segments:
@@ -497,7 +497,7 @@ class ColumnField(Field):
 
     @property
     def active_columns(self) -> List[Column]:
-        """Return list of currently bursting columns."""
+        """Return list of currently active columns."""
         return [column for column in self.columns if column.active]
 
     @property
@@ -561,11 +561,38 @@ class ColumnField(Field):
             column.learn()
         
     def activate_top_k_columns(self, k: int) -> None:
-        """Activate the top-k columns based on overlap."""
+        """Activate the top-k columns based on overlap.
+        
+        If there are ties at the lowest overlap value in top-k,
+        randomly select among the tied columns to meet exactly k.
+        """
         sorted_columns = sorted(self.columns, key=lambda col: col.overlap, reverse=True)
-        for col in sorted_columns[:k]:
+        
+        if k >= len(sorted_columns):
+            for col in sorted_columns:
+                self.active_columns.append(col)
+                col.set_active()
+            return
+        
+        # Find the threshold overlap (the k-th highest value)
+        threshold_overlap = sorted_columns[k - 1].overlap
+        
+        # Separate columns above threshold from those at threshold
+        above_threshold = [col for col in sorted_columns if col.overlap > threshold_overlap]
+        at_threshold = [col for col in sorted_columns if col.overlap == threshold_overlap]
+        
+        # Activate all columns above threshold
+        for col in above_threshold:
             self.active_columns.append(col)
             col.set_active()
+        
+        # Randomly select from tied columns to fill remaining spots
+        remaining_spots = k - len(above_threshold)
+        if remaining_spots > 0 and at_threshold:
+            selected = random.sample(at_threshold, remaining_spots)
+            for col in selected:
+                self.active_columns.append(col)
+                col.set_active()
 
     def activate_cells(self) -> None:
         for column in self.active_columns:
@@ -620,7 +647,7 @@ class ColumnField(Field):
                         segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
 
     def set_prediction(self) -> List[Field]:
-        """Return column-level predictive state and update source fields."""
+        """Propagate predictive state from columns back to input fields."""
         if self.non_spatial:
             for column, input_cell in zip(self.columns, self.input_field):
                 if any(cell.predictive for cell in column.cells):
@@ -637,7 +664,7 @@ class ColumnField(Field):
             cell.active_duty_cycle += alpha * ((1.0 if cell.active else 0.0) - cell.active_duty_cycle)
                 
     def print_stats(self) -> None:
-        """Print statistics about the current stats (with stddev) of the segments  and synapses in the ColumnField."""
+        """Print statistics about segments and synapses in the ColumnField."""
         def describe(values: List[float]) -> Tuple[int, float, float, float, float]:
             if not values:
                 return 0, 0.0, 0.0, 0.0, 0.0
@@ -750,8 +777,8 @@ class InputField(Field):
             raise ValueError(f"Invalid state '{state}'; must be 'active' or 'predictive'")
         if encoded is None:
             encoded = self.cells
-        bit_vector = [getattr(cell, state)  for cell in encoded]
-        return self.encoder.decode(bit_vector, candidates)
+        self.bit_vector = [getattr(cell, state)  for cell in encoded]
+        return self.encoder.decode(self.bit_vector, candidates)
     
     def advance_states(self) -> None:
         for cell in self.cells:
