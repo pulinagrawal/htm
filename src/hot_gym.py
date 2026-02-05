@@ -14,14 +14,14 @@ from encoder_layer.date_encoder import DateEncoderParameters
 config = {
     "num_columns": 1024,
     "cells_per_column": 32,
-    "resolution": .5,
+    "radius": .5,
     "rdse_seed": 5,
 }
 
 params = RDSEParameters(
     size=config["num_columns"],
     sparsity=0.02,
-    resolution=config["resolution"],
+    radius=config["radius"],
     seed=config["rdse_seed"],
 )
 consumption_field = InputField(encoder_params=params)
