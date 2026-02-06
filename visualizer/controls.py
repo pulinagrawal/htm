@@ -73,6 +73,13 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("bracketleft", lambda: app.selection_back())
     plotter.add_key_event("bracketright", lambda: app.selection_forward())
 
+    # Cell state color toggles (number keys 1-5)
+    plotter.add_key_event("1", lambda: app.toggle_state_color("active"))
+    plotter.add_key_event("2", lambda: app.toggle_state_color("predictive"))
+    plotter.add_key_event("3", lambda: app.toggle_state_color("bursting"))
+    plotter.add_key_event("4", lambda: app.toggle_state_color("winner"))
+    plotter.add_key_event("5", lambda: app.toggle_state_color("correct_prediction"))
+
     # Setup field visibility toggles using first available letter from field name
     _setup_field_key_bindings(plotter, app)
 

@@ -74,6 +74,7 @@ class BrainRenderer:
         self.show_outgoing_synapses = True
         self.show_incoming_synapses = True
         self.hidden_fields: set[str] = set()
+        self.hidden_states: set[str] = set()  # Cell states whose coloring is disabled
         self.hide_inactive = False
         self._compute_layouts()
         self._build_cell_index()
@@ -323,7 +324,7 @@ class BrainRenderer:
                     if not is_active:
                         continue
                 positions.append(layout.cell_positions[(ci, ji)])
-                colors.append(state_color(cell, col))
+                colors.append(state_color(cell, col, self.hidden_states))
         if positions:
             self._add_sphere_glyph(
                 plotter, np.array(positions), np.array(colors, dtype=np.uint8),
@@ -502,15 +503,16 @@ class BrainRenderer:
                     if self.hide_inactive and not is_active:
                         continue
                     positions.append(layout.cell_positions[(ci, ji)])
-                    if ci in burst_set and key in active_set:
+                    # Apply color based on state priority, respecting hidden_states
+                    if ci in burst_set and key in active_set and "bursting" not in self.hidden_states:
                         color = COLORS["bursting"]
-                    elif key in pred_set and key in active_set:
+                    elif key in pred_set and key in active_set and "correct_prediction" not in self.hidden_states:
                         color = COLORS["correct_prediction"]
-                    elif key in pred_set:
+                    elif key in pred_set and "predictive" not in self.hidden_states:
                         color = COLORS["predictive"]
-                    elif key in winner_set:
+                    elif key in winner_set and "winner" not in self.hidden_states:
                         color = COLORS["winner"]
-                    elif key in active_set:
+                    elif key in active_set and "active" not in self.hidden_states:
                         color = COLORS["active"]
                     else:
                         color = COLORS["inactive"]

@@ -80,20 +80,31 @@ def color_to_float(color: tuple) -> tuple:
     return (color[0] / 255, color[1] / 255, color[2] / 255)
 
 
-def state_color(cell, column=None) -> tuple:
+# All toggleable cell state names
+CELL_STATES = ["active", "predictive", "bursting", "winner", "correct_prediction"]
+
+
+def state_color(cell, column=None, hidden_states: set | None = None) -> tuple:
     """Determine cell color based on its current state. Returns 0-255 RGB.
 
     Priority: correct_prediction > bursting > predictive > winner > active > inactive
+    
+    Args:
+        cell: The cell object to get color for.
+        column: The column containing the cell (optional, needed for bursting check).
+        hidden_states: Set of state names whose coloring should be disabled.
     """
-    if column and column.bursting and cell.active:
+    hidden = hidden_states or set()
+    
+    if column and column.bursting and cell.active and "bursting" not in hidden:
         return COLORS["bursting"]
-    if cell.predictive and cell.prev_predictive and cell.active:
+    if cell.predictive and cell.prev_predictive and cell.active and "correct_prediction" not in hidden:
         return COLORS["correct_prediction"]
-    if cell.predictive:
+    if cell.predictive and "predictive" not in hidden:
         return COLORS["predictive"]
-    if cell.winner:
+    if cell.winner and "winner" not in hidden:
         return COLORS["winner"]
-    if cell.active:
+    if cell.active and "active" not in hidden:
         return COLORS["active"]
     return COLORS["inactive"]
 

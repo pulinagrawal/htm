@@ -82,6 +82,10 @@ class HTMVisualizer:
         self.plotter = pv.Plotter(title=self.title, window_size=(1600, 900))
         self.plotter.set_background("black")
         self.plotter.enable_anti_aliasing("ssaa")
+        
+        # Disable stereo rendering to prevent VTK's '3' key from causing pink display
+        self.plotter.iren.interactor.GetRenderWindow().SetStereoRender(False)
+        self.plotter.iren.interactor.GetRenderWindow().SetStereoType(0)  # No stereo
 
         self.brain_renderer.render_initial(self.plotter)
 
@@ -414,6 +418,21 @@ class HTMVisualizer:
         self.brain_renderer.hide_inactive = not self.brain_renderer.hide_inactive
         self._update_display()
 
+    def toggle_state_color(self, state_name: str):
+        """Toggle visibility of a specific cell state color."""
+        if state_name in self.brain_renderer.hidden_states:
+            self.brain_renderer.hidden_states.remove(state_name)
+        else:
+            self.brain_renderer.hidden_states.add(state_name)
+        self._update_display()
+        # Disable VTK stereo mode (triggered by default '3' key binding)
+        # Use a one-shot timer to run AFTER VTK's default handler
+        def disable_stereo(*args):
+            self.plotter.iren.interactor.GetRenderWindow().SetStereoRender(False)
+            self.plotter.render()
+        self.plotter.iren.interactor.CreateOneShotTimer(1)
+        self.plotter.iren.interactor.AddObserver('TimerEvent', disable_stereo)
+
     def toggle_legend(self):
         self._show_legend = not self._show_legend
         self._update_legend()
@@ -493,7 +512,13 @@ class HTMVisualizer:
             "[  ]        Sel history   \n"
             "Click       Select        \n"
             "Shift+Click Multi-select  \n"
-            "ESC         Clear select  "
+            "ESC         Clear select  \n"
+            "─────── State Colors ─────\n"
+            "1           Active        \n"
+            "2           Predictive    \n"
+            "3           Bursting      \n"
+            "4           Winner        \n"
+            "5           Correct Pred  "
         )
 
         # Create text actor with monospace font
@@ -563,6 +588,15 @@ class HTMVisualizer:
         lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
         lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
         lines.append(f"Hide Inactive: {'ON' if self.brain_renderer.hide_inactive else 'OFF'}")
+
+        # Cell state color visibility
+        hidden_states = self.brain_renderer.hidden_states
+        lines.append("\nCell State Colors:")
+        lines.append(f"  [1] Active:      {'✓' if 'active' not in hidden_states else '✗'}")
+        lines.append(f"  [2] Predictive:  {'✓' if 'predictive' not in hidden_states else '✗'}")
+        lines.append(f"  [3] Bursting:    {'✓' if 'bursting' not in hidden_states else '✗'}")
+        lines.append(f"  [4] Winner:      {'✓' if 'winner' not in hidden_states else '✗'}")
+        lines.append(f"  [5] Correct Pred:{'✓' if 'correct_prediction' not in hidden_states else '✗'}")
 
         # Field visibility status with letter shortcuts
         field_names = self.get_field_names()
