@@ -62,7 +62,8 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("Left", lambda: app.step_back())
     plotter.add_key_event("r", lambda: app.reset_view())
     plotter.add_key_event("p", lambda: app.toggle_proximal())
-    plotter.add_key_event("x", lambda: app.toggle_proximal_synapses())
+    plotter.add_key_event("x", lambda: app.toggle_connected_proximal())
+    plotter.add_key_event("z", lambda: app.toggle_potential_proximal())
     plotter.add_key_event("s", lambda: app.toggle_synapses())
     plotter.add_key_event("o", lambda: app.toggle_outgoing_synapses())
     plotter.add_key_event("i", lambda: app.toggle_incoming_synapses())
@@ -92,7 +93,7 @@ def setup_key_bindings(plotter, app):
 
 # Keys reserved by other shortcuts or PyVista
 RESERVED_KEYS = {
-    "r", "p", "s", "o", "i", "l", "h", "a", "x", "t",  # Our shortcuts
+    "r", "p", "s", "o", "i", "l", "h", "a", "x", "z", "t",  # Our shortcuts
     "q", "e", "f", "v", "w", "c",            # Common PyVista keys
     "3",                                       # PyVista stereo mode
 }

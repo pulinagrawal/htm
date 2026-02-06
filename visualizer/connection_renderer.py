@@ -8,6 +8,7 @@ from .brain_renderer import BrainRenderer
 
 # Proximal synapse colors
 PROXIMAL_OUTGOING_COLOR = (255, 200, 50)   # gold - synapses FROM selected column
+POTENTIAL_SYNAPSE_COLOR = (150, 80, 80)    # dim red for potential (not connected) synapses
 
 
 class ConnectionRenderer:
@@ -21,8 +22,8 @@ class ConnectionRenderer:
         self.br = brain_renderer
         self.brain = brain_renderer.brain
         self._actors: dict[str, object] = {}
-        self.show_all_potential = True  # Show potential synapses, not just connected
-        self.show_proximal_synapses = True  # Toggle for proximal synapse visibility
+        self.show_connected_proximal = True   # Show connected synapses (perm >= threshold)
+        self.show_potential_proximal = False  # Show potential synapses (perm < threshold)
 
     def render_proximal_for_selection(self, plotter: pv.Plotter, selections: list[dict]):
         """Render proximal connections only for selected columns.
@@ -31,7 +32,7 @@ class ConnectionRenderer:
         """
         actor_name = "proximal_selection"
         
-        if not self.show_proximal_synapses or not selections:
+        if (not self.show_connected_proximal and not self.show_potential_proximal) or not selections:
             if actor_name in self._actors:
                 plotter.remove_actor(actor_name, render=False)
                 del self._actors[actor_name]
@@ -57,8 +58,18 @@ class ConnectionRenderer:
 
         # Render proximal synapses for selected columns
         for col, col_pos in selected_columns:
-            synapses = getattr(col, 'potential_synapses', []) if self.show_all_potential else getattr(col, 'connected_synapses', [])
-            for syn in synapses:
+            potential_synapses = getattr(col, 'potential_synapses', [])
+            connected_synapses = set(getattr(col, 'connected_synapses', []))
+            
+            for syn in potential_synapses:
+                is_connected = syn in connected_synapses
+                
+                # Skip based on toggle states
+                if is_connected and not self.show_connected_proximal:
+                    continue
+                if not is_connected and not self.show_potential_proximal:
+                    continue
+                    
                 src_pos = self.br._cell_id_to_pos.get(id(syn.source_cell))
                 if src_pos is not None:
                     starts.append(src_pos)
@@ -96,9 +107,18 @@ class ConnectionRenderer:
             if col_pos is None:
                 continue
 
-            # Use potential_synapses if show_all_potential, otherwise only connected
-            synapses = getattr(col, 'potential_synapses', []) if self.show_all_potential else getattr(col, 'connected_synapses', [])
-            for syn in synapses:
+            potential_synapses = getattr(col, 'potential_synapses', [])
+            connected_synapses = set(getattr(col, 'connected_synapses', []))
+            
+            for syn in potential_synapses:
+                is_connected = syn in connected_synapses
+                
+                # Skip based on toggle states
+                if is_connected and not self.show_connected_proximal:
+                    continue
+                if not is_connected and not self.show_potential_proximal:
+                    continue
+                    
                 src_pos = self.br._cell_id_to_pos.get(id(syn.source_cell))
                 if src_pos is not None:
                     starts.append(src_pos)

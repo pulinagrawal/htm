@@ -403,9 +403,14 @@ class HTMVisualizer:
         self.show_proximal = not self.show_proximal
         self._update_display()
 
-    def toggle_proximal_synapses(self):
-        """Toggle visibility of proximal synapses for selected columns."""
-        self.conn_renderer.show_proximal_synapses = not self.conn_renderer.show_proximal_synapses
+    def toggle_connected_proximal(self):
+        """Toggle visibility of connected proximal synapses for selected columns."""
+        self.conn_renderer.show_connected_proximal = not self.conn_renderer.show_connected_proximal
+        self._update_display()
+
+    def toggle_potential_proximal(self):
+        """Toggle visibility of potential (not connected) proximal synapses for selected columns."""
+        self.conn_renderer.show_potential_proximal = not self.conn_renderer.show_potential_proximal
         self._update_display()
 
     def toggle_synapses(self):
@@ -542,7 +547,8 @@ class HTMVisualizer:
         lines.append(f"\nHistory: {self.history._position + 1}/{len(self.history)}")
         lines.append(f"Synapses: {'ON' if self.brain_renderer.show_synapses else 'OFF'}")
         lines.append(f"Proximal (all): {'ON' if self.show_proximal else 'OFF'}")
-        lines.append(f"Proximal (sel): {'ON' if self.conn_renderer.show_proximal_synapses else 'OFF'}")
+        lines.append(f"Prox Connected: {'ON' if self.conn_renderer.show_connected_proximal else 'OFF'}")
+        lines.append(f"Prox Potential: {'ON' if self.conn_renderer.show_potential_proximal else 'OFF'}")
         lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
         lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
         lines.append(f"Hide Inactive: {'ON' if self.brain_renderer.hide_inactive else 'OFF'}")
@@ -626,7 +632,8 @@ class HTMVisualizer:
             "      <- ->  Step fwd/back \n"
             "          S  Synapses      \n"
             "          P  Proximal(all) \n"
-            "          X  Proximal(sel) \n"
+            "          X  Prox Connected\n"
+            "          Z  Prox Potential\n"
             "          O  Outgoing      \n"
             "          I  Incoming      \n"
             "          A  Hide Inactive \n"
