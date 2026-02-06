@@ -69,6 +69,7 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("a", lambda: app.toggle_inactive())
     plotter.add_key_event("l", lambda: app.toggle_legend())
     plotter.add_key_event("h", lambda: app.toggle_shortcuts())
+    plotter.add_key_event("t", lambda: app.toggle_speed_slider())
     plotter.add_key_event("Escape", lambda: app.clear_selection())
     plotter.add_key_event("bracketleft", lambda: app.selection_back())
     plotter.add_key_event("bracketright", lambda: app.selection_forward())
@@ -80,13 +81,18 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("4", lambda: app.toggle_state_color("winner"))
     plotter.add_key_event("5", lambda: app.toggle_state_color("correct_prediction"))
 
+    # Segment state color toggles (number keys 6-8)
+    plotter.add_key_event("6", lambda: app.toggle_segment_state_color("active"))
+    plotter.add_key_event("7", lambda: app.toggle_segment_state_color("learning"))
+    plotter.add_key_event("8", lambda: app.toggle_segment_state_color("matching"))
+
     # Setup field visibility toggles using first available letter from field name
     _setup_field_key_bindings(plotter, app)
 
 
 # Keys reserved by other shortcuts or PyVista
 RESERVED_KEYS = {
-    "r", "p", "s", "o", "i", "l", "h", "a", "x",  # Our shortcuts
+    "r", "p", "s", "o", "i", "l", "h", "a", "x", "t",  # Our shortcuts
     "q", "e", "f", "v", "w", "c",            # Common PyVista keys
     "3",                                       # PyVista stereo mode
 }

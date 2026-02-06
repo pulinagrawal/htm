@@ -75,6 +75,7 @@ class BrainRenderer:
         self.show_incoming_synapses = True
         self.hidden_fields: set[str] = set()
         self.hidden_states: set[str] = set()  # Cell states whose coloring is disabled
+        self.hidden_segment_states: set[str] = set()  # Segment states whose coloring is disabled
         self.hide_inactive = False
         self._compute_layouts()
         self._build_cell_index()
@@ -355,7 +356,7 @@ class BrainRenderer:
                     offset = _segment_offset_direction(si, n_segs)
                     seg_pos = cell_pos + offset
                     seg_positions.append(seg_pos)
-                    seg_colors.append(segment_color(seg))
+                    seg_colors.append(segment_color(seg, self.hidden_segment_states))
 
                     if self.show_synapses:
                         for syn in seg.synapses:

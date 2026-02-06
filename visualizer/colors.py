@@ -34,7 +34,7 @@ INPUT_FIELD_COLORS = [
 
 # UI colors
 BG_COLOR = (0, 0, 0)
-TEXT_COLOR = (0, 255, 0)
+TEXT_COLOR = (255, 255, 255)
 TITLE_COLOR = (0, 255, 0)
 STATS_COLOR = (0, 200, 0)
 LABEL_COLOR = (255, 255, 0)
@@ -83,6 +83,9 @@ def color_to_float(color: tuple) -> tuple:
 # All toggleable cell state names
 CELL_STATES = ["active", "predictive", "bursting", "winner", "correct_prediction"]
 
+# All toggleable segment state names
+SEGMENT_STATES = ["active", "learning", "matching"]
+
 
 def state_color(cell, column=None, hidden_states: set | None = None) -> tuple:
     """Determine cell color based on its current state. Returns 0-255 RGB.
@@ -109,12 +112,19 @@ def state_color(cell, column=None, hidden_states: set | None = None) -> tuple:
     return COLORS["inactive"]
 
 
-def segment_color(segment) -> tuple:
-    """Determine segment color based on state."""
-    if segment.learning:
+def segment_color(segment, hidden_states: set | None = None) -> tuple:
+    """Determine segment color based on state.
+    
+    Args:
+        segment: The segment object to get color for.
+        hidden_states: Set of segment state names whose coloring should be disabled.
+    """
+    hidden = hidden_states or set()
+    
+    if segment.learning and "learning" not in hidden:
         return SEGMENT_COLORS["learning"]
-    if segment.active:
+    if segment.active and "active" not in hidden:
         return SEGMENT_COLORS["active"]
-    if segment.matching:
+    if segment.matching and "matching" not in hidden:
         return SEGMENT_COLORS["matching"]
     return SEGMENT_COLORS["inactive"]

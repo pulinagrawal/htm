@@ -59,6 +59,7 @@ class HTMVisualizer:
         # Legend and shortcuts visibility
         self._show_legend = False
         self._show_shortcuts = False
+        self._show_speed_slider = True
 
         # Field visibility - set of field names that are hidden
         self.hidden_fields: set[str] = set()
@@ -80,7 +81,7 @@ class HTMVisualizer:
         pv.global_theme.font.color = "white"
 
         self.plotter = pv.Plotter(title=self.title, window_size=(1600, 900))
-        self.plotter.set_background("black")
+        self.plotter.set_background(pv.global_theme.background)
         self.plotter.enable_anti_aliasing("ssaa")
         
         # Disable stereo rendering to prevent VTK's '3' key from causing pink display
@@ -101,7 +102,7 @@ class HTMVisualizer:
             callback=self._on_click, side="left",
         )
 
-        self._add_title()
+        # self._add_title()
         self._add_controls_text()
         self._add_stats_overlay()
         self._add_selection_overlay()
@@ -443,6 +444,11 @@ class HTMVisualizer:
         self._update_shortcuts()
         self.plotter.render()
 
+    def toggle_speed_slider(self):
+        self._show_speed_slider = not self._show_speed_slider
+        self._update_speed_slider()
+        self.plotter.render()
+
     def toggle_field(self, field_name: str):
         """Toggle visibility of a specific field."""
         if field_name in self.hidden_fields:
@@ -470,72 +476,19 @@ class HTMVisualizer:
 
     def _add_title(self):
         self.plotter.add_text(
-            self.title, position="upper_left", font_size=16,
+            self.title, position="upper_left", font_size=10,
             color=color_to_float(TITLE_COLOR), name="title",
         )
 
     def _add_controls_text(self):
-        # Show minimal hint at top
+        # Show minimal hint at top right
         self.plotter.add_text(
-            "Press H for keyboard shortcuts",
-            position="upper_edge", font_size=9,
+            "L for Legend                               | " \
+            "                              H for Shortcuts",
+            position="upper_right", font_size=9,
             color=(0.5, 0.5, 0.5), name="controls_hint",
         )
         self._shortcuts_actors = []
-
-    def _update_shortcuts(self):
-        # Remove existing shortcuts actors
-        if hasattr(self, '_shortcuts_actors'):
-            for actor in self._shortcuts_actors:
-                try:
-                    self.plotter.remove_actor(actor)
-                except Exception:
-                    pass
-        self._shortcuts_actors = []
-
-        if not self._show_shortcuts:
-            return
-
-        # Build shortcuts text with fixed-width columns
-        shortcuts_text = (
-            "SPACE       Play/Pause    \n"
-            "Arrow       Step fwd/back \n"
-            "S           Synapses      \n"
-            "P           Proximal(all) \n"
-            "X           Proximal(sel) \n"
-            "O           Outgoing      \n"
-            "I           Incoming      \n"
-            "A           Hide Inactive \n"
-            "R           Reset camera  \n"
-            "L           Legend        \n"
-            "H           Shortcuts     \n"
-            "[  ]        Sel history   \n"
-            "Click       Select        \n"
-            "Shift+Click Multi-select  \n"
-            "ESC         Clear select  \n"
-            "─────── State Colors ─────\n"
-            "1           Active        \n"
-            "2           Predictive    \n"
-            "3           Bursting      \n"
-            "4           Winner        \n"
-            "5           Correct Pred  "
-        )
-
-        # Create text actor with monospace font
-        actor = self.plotter.add_text(
-            shortcuts_text,
-            position="upper_right",
-            font_size=9,
-            color=color_to_float(TEXT_COLOR),
-            name="shortcuts_box",
-            font="courier",
-        )
-        # Set text properties for box styling
-        actor.GetTextProperty().SetBackgroundColor(0.1, 0.1, 0.1)
-        actor.GetTextProperty().SetBackgroundOpacity(0.9)
-        actor.GetTextProperty().SetFrameColor(0.3, 0.3, 0.3)
-        actor.GetTextProperty().SetFrame(True)
-        self._shortcuts_actors.append(actor)
 
     def _add_stats_overlay(self):
         self.plotter.add_text(
@@ -624,14 +577,89 @@ class HTMVisualizer:
         return name
 
     def _add_widgets(self):
+        self._speed_slider = None
+        self._update_speed_slider()
+
+    def _update_speed_slider(self):
+        # Remove existing slider if present
+        if self._speed_slider is not None:
+            self.plotter.clear_slider_widgets()
+            self._speed_slider = None
+
+        if not self._show_speed_slider:
+            return
+
         def speed_callback(value):
             self.playback.speed_ms = int(value)
 
-        self.plotter.add_slider_widget(
-            speed_callback, rng=[50, 2000], value=500,
-            title="Speed (ms)", pointa=(0.7, 0.05), pointb=(0.95, 0.05),
+        self._speed_slider = self.plotter.add_slider_widget(
+            speed_callback, rng=[1, 2000], value=self.playback.speed_ms,
+            title="Speed (ms)", pointa=(0.8, 0.05), pointb=(0.98, 0.05),
             style="modern", color=color_to_float(TEXT_COLOR),
+            tube_width=0.005, slider_width=0.01,
+            title_height=0.023,
         )
+
+    def _update_shortcuts(self):
+        # Remove existing shortcuts actors
+        if hasattr(self, '_shortcuts_actors'):
+            for actor in self._shortcuts_actors:
+                try:
+                    self.plotter.remove_actor(actor)
+                except Exception:
+                    pass
+        self._shortcuts_actors = []
+
+        if not self._show_shortcuts:
+            return
+
+        # Build shortcuts text with fixed-width columns
+        shortcuts_text = (
+            "                           \n"
+            "                           \n"
+            "      SPACE  Play/Pause    \n"
+            "      <- ->  Step fwd/back \n"
+            "          S  Synapses      \n"
+            "          P  Proximal(all) \n"
+            "          X  Proximal(sel) \n"
+            "          O  Outgoing      \n"
+            "          I  Incoming      \n"
+            "          A  Hide Inactive \n"
+            "          R  Reset camera  \n"
+            "          L  Legend        \n"
+            "          H  Shortcuts     \n"
+            "          T  Speed Slider  \n"
+            "      [  ]  Selectn hist  \n"
+            "      Click  Select        \n"
+            "Shift+Click  Multi-select  \n"
+            "        ESC  Clear select  \n"
+            "                          \n"
+            "─── Cell Colors Toggle  ──\n"
+            "          1  Active        \n"
+            "          2  Predictive    \n"
+            "          3  Bursting      \n"
+            "          4  Winner        \n"
+            "          5  Correct Pred  \n"
+            "                          \n"
+            "──── Segment Colors Toggle\n"
+            "          6  Active        \n"
+            "          7  Learning      \n"
+            "          8  Matching      "
+        )
+
+        # Create text actor with monospace font
+        actor = self.plotter.add_text(
+            shortcuts_text,
+            position="upper_right",
+            font_size=10,
+            color=color_to_float(TEXT_COLOR),
+            name="shortcuts_box",
+            font="courier",
+        )
+        # Set text properties for box styling
+        actor.GetTextProperty().SetBackgroundColor(0.0, 0.0, 0.0)
+        actor.GetTextProperty().SetBackgroundOpacity(0)
+        self._shortcuts_actors.append(actor)
 
     def _update_legend(self):
         # Remove existing legend actors
@@ -672,11 +700,11 @@ class HTMVisualizer:
 
         legend_actor = self.plotter.add_legend(
             labels=all_entries,
-            bcolor=(0.1, 0.1, 0.1),
-            border=True,
-            size=(0.15, 0.35),
-            loc="lower left",
+            bcolor=(0.0, 0.0, 0.0),
+            border=False,
+            size=(0.1, 0.25),
             name="legend",
+            font_family="courier",
         )
         self._legend_actors.append(legend_actor)
 
