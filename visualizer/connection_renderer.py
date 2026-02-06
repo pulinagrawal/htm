@@ -79,7 +79,7 @@ class ConnectionRenderer:
         self._actors[actor_name] = True
 
     def render_proximal(self, plotter: pv.Plotter, column_field_name: str,
-                        active_only: bool = True, max_connections: int = 50000):
+                        active_only: bool = True, max_connections: int = 500000):
         """Render proximal connections from input cells to column bases."""
         field = self.brain._column_fields.get(column_field_name)
         if not field:

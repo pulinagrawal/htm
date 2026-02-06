@@ -87,6 +87,11 @@ class HTMVisualizer:
         # Disable stereo rendering to prevent VTK's '3' key from causing pink display
         self.plotter.iren.interactor.GetRenderWindow().SetStereoRender(False)
         self.plotter.iren.interactor.GetRenderWindow().SetStereoType(0)  # No stereo
+        
+        # Disable VTK's default 'p' key pick handler (which shows a red bounding box)
+        style = self.plotter.iren.interactor.GetInteractorStyle()
+        if style:
+            style.PickingManagedOff()  # Disable VTK's built-in picking behavior
 
         self.brain_renderer.render_initial(self.plotter)
 
