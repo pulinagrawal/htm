@@ -13,7 +13,6 @@ from .colors import (
     color_to_float, TEXT_COLOR, TITLE_COLOR, BG_COLOR,
     COLORS, SEGMENT_COLORS,
 )
-from .brain_renderer import OUTGOING_SYN_COLOR, INCOMING_SYN_COLOR
 
 
 class HTMVisualizer:
@@ -26,8 +25,8 @@ class HTMVisualizer:
         S           Toggle synapse line visibility
         P           Toggle proximal connection visibility (all columns)
         X           Toggle proximal synapses for selected column
-        O           Toggle outgoing distal synapses for selection
-        I           Toggle incoming distal synapses for selection
+        O           Toggle outgoing distal synapses (cell → other segments)
+        I           Toggle incoming distal synapses (segment ← source cells)
         R           Reset camera
         Click       Select element (cell / segment / input cell)
         Shift+Click Add element to multi-selection
@@ -444,6 +443,14 @@ class HTMVisualizer:
         self.plotter.iren.interactor.CreateOneShotTimer(1)
         self.plotter.iren.interactor.AddObserver('TimerEvent', disable_stereo)
 
+    def toggle_segment_state_color(self, state_name: str):
+        """Toggle visibility of a specific segment state color."""
+        if state_name in self.brain_renderer.hidden_segment_states:
+            self.brain_renderer.hidden_segment_states.remove(state_name)
+        else:
+            self.brain_renderer.hidden_segment_states.add(state_name)
+        self._update_display()
+
     def toggle_legend(self):
         self._show_legend = not self._show_legend
         self._update_legend()
@@ -549,19 +556,23 @@ class HTMVisualizer:
         lines.append(f"Proximal (all): {'ON' if self.show_proximal else 'OFF'}")
         lines.append(f"Prox Connected: {'ON' if self.conn_renderer.show_connected_proximal else 'OFF'}")
         lines.append(f"Prox Potential: {'ON' if self.conn_renderer.show_potential_proximal else 'OFF'}")
-        lines.append(f"Outgoing: {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
-        lines.append(f"Incoming: {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
+        lines.append(f"Outgoing (O): {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
+        lines.append(f"Incoming (I): {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
         lines.append(f"Hide Inactive: {'ON' if self.brain_renderer.hide_inactive else 'OFF'}")
 
         # Cell state color visibility
         hidden_states = self.brain_renderer.hidden_states
+        hidden_segment_states = self.brain_renderer.hidden_segment_states
         lines.append("\nCell State Colors:")
-        lines.append(f"  [1] Active:      {'✓' if 'active' not in hidden_states else '✗'}")
-        lines.append(f"  [2] Predictive:  {'✓' if 'predictive' not in hidden_states else '✗'}")
-        lines.append(f"  [3] Bursting:    {'✓' if 'bursting' not in hidden_states else '✗'}")
-        lines.append(f"  [4] Winner:      {'✓' if 'winner' not in hidden_states else '✗'}")
-        lines.append(f"  [5] Correct Pred:{'✓' if 'correct_prediction' not in hidden_states else '✗'}")
-
+        lines.append(f"  [1] Active:      {'ON' if 'active' not in hidden_states else 'OFF'}")
+        lines.append(f"  [2] Predictive:  {'ON' if 'predictive' not in hidden_states else 'OFF'}")
+        lines.append(f"  [3] Bursting:    {'ON' if 'bursting' not in hidden_states else 'OFF'}")
+        lines.append(f"  [4] Winner:      {'ON' if 'winner' not in hidden_states else 'OFF'}")
+        lines.append(f"  [5] Correct Pred:{'ON' if 'correct_prediction' not in hidden_states else 'OFF'}")
+        lines.append("\n Segment State Colors:")
+        lines.append(f"  [6] Active:      {'ON' if 'active' not in hidden_segment_states else 'OFF'}")
+        lines.append(f"  [7] Learning:    {'ON' if 'learning' not in hidden_segment_states else 'OFF'}")
+        lines.append(f"  [8] Matching:    {'ON' if 'matching' not in hidden_segment_states else 'OFF'}")
         # Field visibility status with letter shortcuts
         field_names = self.get_field_names()
         if field_names:
@@ -634,8 +645,8 @@ class HTMVisualizer:
             "          P  Proximal(all) \n"
             "          X  Prox Connected\n"
             "          Z  Prox Potential\n"
-            "          O  Outgoing      \n"
-            "          I  Incoming      \n"
+            "          O  Outgoing(cell)\n"
+            "          I  Incoming(seg) \n"
             "          A  Hide Inactive \n"
             "          R  Reset camera  \n"
             "          L  Legend        \n"
@@ -703,12 +714,7 @@ class HTMVisualizer:
             ("Seg Inactive", color_to_float(SEGMENT_COLORS["inactive"])),
         ]
 
-        synapse_entries = [
-            ("Outgoing Syn", color_to_float(OUTGOING_SYN_COLOR)),
-            ("Incoming Syn", color_to_float(INCOMING_SYN_COLOR)),
-        ]
-
-        all_entries = cell_entries + segment_entries + synapse_entries
+        all_entries = cell_entries + segment_entries
 
         legend_actor = self.plotter.add_legend(
             labels=all_entries,

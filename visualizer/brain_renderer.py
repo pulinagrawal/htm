@@ -14,6 +14,9 @@ from .colors import (
     color_to_float, state_color, segment_color, permanence_color,
     LABEL_COLOR,
 )
+
+# Note: Incoming synapses = synapses feeding INTO a selected segment from source cells
+#       Outgoing synapses = synapses where selected cell is the SOURCE feeding other segments
 from .history import HTMSnapshot
 
 # Layout constants
@@ -29,10 +32,6 @@ SEGMENT_OFFSET = 0.2
 HIGHLIGHT_COLOR = (255, 255, 255)
 HIGHLIGHT_RADIUS_SCALE = 2.5  # multiplier over base radius
 HIGHLIGHT_OPACITY = 0.25
-
-# Selection synapse colors
-OUTGOING_SYN_COLOR = (255, 200, 50)   # gold - synapses FROM selected cell's segments
-INCOMING_SYN_COLOR = (50, 200, 255)   # cyan - synapses TO selected cell
 
 
 def grid_position(index: int, total: int) -> tuple[float, float]:
@@ -602,18 +601,19 @@ class BrainRenderer:
                                 continue
 
                             source_is_selected = id(syn.source_cell) in selected_cell_ids
+                            syn_color = permanence_color(syn.permanence)
 
-                            if (cell_is_selected or seg_is_selected) and self.show_outgoing_synapses:
-                                # Outgoing: this cell's segment reads from source
+                            if (cell_is_selected or seg_is_selected) and self.show_incoming_synapses:
+                                # Incoming: synapses feeding INTO this segment from source cells
                                 syn_starts.append(seg_pos)
                                 syn_ends.append(src_pos)
-                                syn_colors.append(OUTGOING_SYN_COLOR)
+                                syn_colors.append(syn_color)
 
-                            elif source_is_selected and self.show_incoming_synapses:
-                                # Incoming: some other segment reads from selected cell
+                            elif source_is_selected and self.show_outgoing_synapses:
+                                # Outgoing: selected cell is SOURCE, feeding into other segments
                                 syn_starts.append(seg_pos)
                                 syn_ends.append(src_pos)
-                                syn_colors.append(INCOMING_SYN_COLOR)
+                                syn_colors.append(syn_color)
 
         if syn_starts:
             self._draw_lines(
