@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.HTM import InputField, ColumnField
+from core.HTM import InputField, ColumnField
 from src.encoder_layer.rdse import RDSEParameters
 
 class TestRealData(unittest.TestCase):

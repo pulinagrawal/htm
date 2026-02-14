@@ -24,7 +24,7 @@ from tqdm import tqdm
 
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-import src.HTM as bb
+import core.HTM as bb
 
 
 @dataclass(frozen=True)

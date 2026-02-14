@@ -6,7 +6,7 @@ for encoding inputs and computing temporal memory in a single step.
 
 from typing import Any
 
-from src.HTM import ColumnField, InputField, Field, OutputField
+from core.HTM import ColumnField, InputField, Field, OutputField
 
 
 class Brain:

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.HTM import ColumnField, InputField
+from core.HTM import ColumnField, InputField
 from encoder_layer.rdse import RandomDistributedScalarEncoder as RDSE, RDSEParameters
 
 

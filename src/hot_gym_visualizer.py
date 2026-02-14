@@ -5,8 +5,8 @@ from pathlib import Path
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from tqdm import tqdm
-from src.HTM import ColumnField, InputField
-from src.brain import Brain
+from core.HTM import ColumnField, InputField
+from core.brain import Brain
 from visualizer import HTMVisualizer
 from encoder_layer.rdse import RDSEParameters
 from encoder_layer.date_encoder import DateEncoderParameters    
