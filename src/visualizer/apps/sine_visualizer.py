@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent))
 
-from src.HTM import ColumnField, InputField
-from src.brain import Brain
+from core.HTM import ColumnField, InputField
+from core.brain import Brain
 from src.encoder_layer.rdse import RDSEParameters
 from visualizer import HTMVisualizer
 
