@@ -33,6 +33,8 @@ class Brain:
         self._input_fields: dict[str, InputField] = {k:v for k,v in fields.items() if isinstance(v, InputField)}
         self._output_fields: dict[str, OutputField] = {k:v for k,v in fields.items() if isinstance(v, OutputField)}
         self._column_fields: dict[str, ColumnField] = {k:v for k,v in fields.items() if isinstance(v, ColumnField)}
+        self.no_go_field = None
+        self.go_field = None
         self.fields = fields
     
     def __getitem__(self, name: str) -> Field:
@@ -47,34 +49,29 @@ class Brain:
         self,
         inputs: dict[str, Any],
         learn: bool = True,
+        reward: float | None = None,
     ):
         """Process one timestep: encode all inputs and compute column field.
 
         Args:
             inputs: Dict mapping field names to input values.
             learn: Whether to enable learning during this step.
+            reward: External reward signal. If None, reward is computed internally.
         """
         self.encode_only(inputs)
         self.compute_only(learn=learn)
+        self.estimate_value(reward)
+        self.generate_behavior()
+    
+    def estimate_value(self, reward: float | None = None) -> None:
+        for column_field in self._column_fields.values():
+            if isinstance(column_field, ValueFieldMixin):
+                if reward is None:
+                    reward = column_field.compute_intrinsic_reward()
+                column_field.update_values(reward)
+    
+    def generate_behavior(self):
         return {name: field.decode() for name, field in self._output_fields.items()}
-
-    def prediction(self) -> tuple[Any, ...]:
-        """Get the current prediction for a specific input field.
-
-        Returns:
-            Result from decoder (typically value, confidence tuple).
-
-        Raises:
-            KeyError: If field_name doesn't match a registered field.
-            ValueError: If ColumnField is not set.
-        """
-        predictions = {}
-        for input_name in self._input_fields:
-            input_field = self._input_fields[input_name]
-            if hasattr(input_field.encoder, 'decode'):
-                predictions[input_name], predictions[input_name+'.conf'] = input_field.decode('predictive')
-        
-        return predictions
 
     def encode_only(self, inputs: dict[str, Any]) -> None:
         """Encode inputs without computing (useful for getting predictions first).
@@ -107,3 +104,21 @@ class Brain:
         """Clear all states in the column field."""
         for field in self.fields:
             field.reset()
+
+    def prediction(self) -> tuple[Any, ...]:
+        """Get the current prediction for a specific input field.
+
+        Returns:
+            Result from decoder (typically value, confidence tuple).
+
+        Raises:
+            KeyError: If field_name doesn't match a registered field.
+            ValueError: If ColumnField is not set.
+        """
+        predictions = {}
+        for input_name in self._input_fields:
+            input_field = self._input_fields[input_name]
+            if hasattr(input_field.encoder, 'decode'):
+                predictions[input_name], predictions[input_name+'.conf'] = input_field.decode('predictive')
+        
+        return predictions
