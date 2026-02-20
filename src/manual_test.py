@@ -19,8 +19,6 @@ def test_sine_wave_bursting_columns_converge():
         config = {
             "num_columns": 512,
             "cells_per_column": 16,
-            "activation_threshold": 3,
-            "learning_threshold": 5,
             "resolution": 0.001,
             "cycle_length": 64,
             "rdse_seed": 5,
@@ -33,7 +31,6 @@ def test_sine_wave_bursting_columns_converge():
             size=config["num_columns"],
             sparsity=0.02,
             resolution=config["resolution"],
-            category=False,
             seed=config["rdse_seed"],
         )
         input_field = InputField(size=config["num_columns"], encoder_params=params)

@@ -18,7 +18,7 @@ CONNECTED_PERM = 0.5  # Permanence threshold for a synapse to be considered conn
 DESIRED_LOCAL_SPARSITY = 0.02  # Desired local sparsity for inhibition
 INITIAL_PERMANENCE = 0.21  # Initial permanence for new synapses
 PERMANENCE_INC = 0.20  # Amount by which synapses are incremented during learning
-PERMANENCE_DEC = 0.10  # Amount by which synapses are decremented during learning
+PERMANENCE_DEC = 0.20  # Amount by which synapses are decremented during learning
 PREDICTED_DECREMENT_PCT = 0.1  # Fraction of permanence decrement for predicted but inactive segments
 GROWTH_STRENGTH = 0.5  # Fraction of max synapses to grow on a segment during learning
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
@@ -641,7 +641,7 @@ class ColumnField(Field):
                 for segment in cell.segments:
                     if segment.learning:               # Same as 1) L40-48
                         segment.grow()               
-                        segment.adapt(strength=5.0)          # Same as 1) L42-44 
+                        segment.adapt(strength=1.0)          # Same as 1) L42-44 
 
         for column in self.columns:
             if not column.active:
