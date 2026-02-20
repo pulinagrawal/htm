@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from statistics import fmean
-from typing import Any
+from typing import Any, Callable, Optional
 
-class ValueFieldMixin:
-    """Mixin that adds per-cell value and trace computation to a field.
 
-    The mixin only assumes the host class exposes a ``cells`` iterable.
-    Place this mixin before ``Field`` in MRO:
+class ValueTracker:
+    """Standalone value estimator that operates on a ColumnField via composition.
 
-        class MyField(ValueFieldMixin, Field):
-            ...
+    Holds a reference to a field and tracks per-cell TD values and eligibility
+    traces without requiring the field to inherit from anything.
+
+    Usage::
+
+        d1 = ColumnField(input_fields=[layer5], ...)
+        d1_tracker = ValueTracker(d1, weight_fn=lambda cell: int(cell.active))
+        # each timestep:
+        d1_tracker.update_values(reward=reward)
+        layer5.compute(learn=True, td_error=d1_tracker.avg_error)
 
     ``trace`` is computed as an exponential moving sum:
 
@@ -19,30 +25,33 @@ class ValueFieldMixin:
 
     def __init__(
         self,
-        *args: Any,
-        **kwargs: Any,
+        field: Any,
+        weight_fn: Optional[Callable[[Any], float]] = None,
     ) -> None:
-        super().__init__(*args, **kwargs)
-        self.values = [0]*len(self.cells)
-        self.traces = [0]*len(self.cells) 
+        self._field = field
+        self.values = [0.0] * len(field.cells)
+        self.traces = [0.0] * len(field.cells)
         self.td_learning_rate = 0.1
         self.td_discount = 0.9
         self.trace_decay = 0.9
-        self._avg_error = 0.0
+        self.avg_error = 0.0
+        self._weight_fn = weight_fn or ValueTracker._default_weight
 
     @staticmethod
-    def weight(cell: Any) -> float:
-        """Default scalar weight for a cell based on HTM-like boolean states."""
-        if cell.prev_predictive and cell.active: # Correct prediction
-            return 10
-        if not cell.prev_predictive and cell.active: # False positive
-            return 1
-        return 0
+    def _default_weight(cell: Any) -> float:
+        """Default weight for a cell based on HTM-like boolean states."""
+        if cell.prev_predictive and cell.active:  # Correct prediction
+            return 10.0
+        if not cell.prev_predictive and cell.active:  # False positive
+            return 1.0
+        return 0.0
 
     def avg_value(self) -> float:
-        """Compute value for a cell based on its state and the weight function."""
-        return fmean(self.weight(cell)*value 
-                     for cell, value in zip(self.cells, self.values))
+        """Weighted average of per-cell value estimates."""
+        return fmean(
+            self._weight_fn(cell) * v
+            for cell, v in zip(self._field.cells, self.values)
+        )
 
     def calculate_avg_error(self, reward: float) -> float:
         avg_value = self.avg_value()
@@ -55,13 +64,13 @@ class ValueFieldMixin:
     def update_values(self, reward) -> None:
         """Update value estimates for all cells based on current states."""
         self.calculate_avg_error(reward=reward)
-        for i, cell in enumerate(self.cells):
+        for i, cell in enumerate(self._field.cells):
             self.values[i] += self.td_learning_rate * self.avg_error * self.traces[i]
         self.decay_traces()
 
     def decay_traces(self) -> None:
         """Update trace values for all cells based on current cell states."""
-        for i, cell in enumerate(self.cells):
+        for i, cell in enumerate(self._field.cells):
             if cell.active:
                 self.traces[i] = 1
             else:
@@ -70,4 +79,3 @@ class ValueFieldMixin:
     def compute_intrinsic_reward(self) -> float:
         """Compute an intrinsic reward signal based on value prediction error."""
         raise NotImplementedError("Needs Implementation")
-

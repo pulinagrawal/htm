@@ -6,7 +6,8 @@ for encoding inputs and computing temporal memory in a single step.
 
 from typing import Any
 
-from core.HTM import ColumnField, InputField, Field, OutputField
+from core.HTM import ColumnField, InputField, Field, OutputField, GoField, NoGoField
+from core.sungur import ValueTracker
 
 
 class Brain:
@@ -30,11 +31,14 @@ class Brain:
     """
 
     def __init__(self, fields: dict[str, Field]) -> None:
-        self._input_fields: dict[str, InputField] = {k:v for k,v in fields.items() if isinstance(v, InputField)}
         self._output_fields: dict[str, OutputField] = {k:v for k,v in fields.items() if isinstance(v, OutputField)}
-        self._column_fields: dict[str, ColumnField] = {k:v for k,v in fields.items() if isinstance(v, ColumnField)}
-        self.no_go_field = None
-        self.go_field = None
+        self._input_fields: dict[str, InputField] = {k:v for k,v in fields.items() if isinstance(v, InputField)
+                                                      and not isinstance(v, OutputField)}
+        self._go_fields: dict[str, GoField] = {k:v for k,v in fields.items() if isinstance(v, GoField)}
+        self._nogo_fields: dict[str, NoGoField] = {k:v for k,v in fields.items() if isinstance(v, NoGoField)}
+        self._column_fields: dict[str, ColumnField] = {k:v for k,v in fields.items() if isinstance(v, ColumnField)
+                                                        and not isinstance(v, (GoField, NoGoField))}
+        self._value_trackers: list[ValueTracker] = []
         self.fields = fields
     
     def __getitem__(self, name: str) -> Field:
@@ -61,14 +65,19 @@ class Brain:
         self.encode_only(inputs)
         self.compute_only(learn=learn)
         self.estimate_value(reward)
+        self.activate_apical_segments()
         self.generate_behavior()
     
     def estimate_value(self, reward: float | None = None) -> None:
-        for column_field in self._column_fields.values():
-            if isinstance(column_field, ValueFieldMixin):
-                if reward is None:
-                    reward = column_field.compute_intrinsic_reward()
-                column_field.update_values(reward)
+        for tracker in self._value_trackers:
+            if reward is None:
+                reward = tracker.compute_intrinsic_reward()
+            tracker.update_values(reward)
+
+    def activate_apical_segments(self) -> None:
+        """Activate apical segments in Go/NoGo fields based on current column states."""
+        for field in self.fields:
+            field.activate_apical_segments(self._column_fields)
     
     def generate_behavior(self):
         return {name: field.decode() for name, field in self._output_fields.items()}
@@ -90,9 +99,12 @@ class Brain:
         Args:
             learn: Whether to enable learning during this step.
         """
-        # Compute temporal memory
-        for column_field in self._column_fields.values():
-            column_field.compute(learn=learn)
+        for field in self._column_fields.values():
+            field.compute(learn=learn)
+        for field in self._go_fields.values():
+            field.compute(learn=learn)
+        for field in self._nogo_fields.values():
+            field.compute(learn=learn)
 
     def print_stats(self) -> None:
         """Print statistics from the column field."""
