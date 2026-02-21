@@ -4,7 +4,7 @@ from statistics import fmean
 from typing import Any, Callable, Optional
 
 
-class ValueTracker:
+class ValueFieldMixin:
     """Standalone value estimator that operates on a ColumnField via composition.
 
     Holds a reference to a field and tracks per-cell TD values and eligibility
@@ -35,7 +35,7 @@ class ValueTracker:
         self.td_discount = 0.9
         self.trace_decay = 0.9
         self.avg_error = 0.0
-        self._weight_fn = weight_fn or ValueTracker._default_weight
+        self._weight_fn = weight_fn or ValueFieldMixin._default_weight
 
     @staticmethod
     def _default_weight(cell: Any) -> float:
@@ -76,6 +76,3 @@ class ValueTracker:
             else:
                 self.traces[i] *= self.td_discount*self.trace_decay
     
-    def compute_intrinsic_reward(self) -> float:
-        """Compute an intrinsic reward signal based on value prediction error."""
-        raise NotImplementedError("Needs Implementation")

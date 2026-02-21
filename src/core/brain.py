@@ -7,7 +7,7 @@ for encoding inputs and computing temporal memory in a single step.
 from typing import Any
 
 from core.HTM import ColumnField, InputField, Field, OutputField, GoField, NoGoField
-from core.sungur import ValueTracker
+from core.sungur import ValueFieldMixin
 
 
 class Brain:
@@ -34,11 +34,9 @@ class Brain:
         self._output_fields: dict[str, OutputField] = {k:v for k,v in fields.items() if isinstance(v, OutputField)}
         self._input_fields: dict[str, InputField] = {k:v for k,v in fields.items() if isinstance(v, InputField)
                                                       and not isinstance(v, OutputField)}
-        self._go_fields: dict[str, GoField] = {k:v for k,v in fields.items() if isinstance(v, GoField)}
-        self._nogo_fields: dict[str, NoGoField] = {k:v for k,v in fields.items() if isinstance(v, NoGoField)}
+        self._value_fields: dict[str, ValueFieldMixin] = {k:v for k,v in fields.items() if isinstance(v, ValueFieldMixin)}
         self._column_fields: dict[str, ColumnField] = {k:v for k,v in fields.items() if isinstance(v, ColumnField)
-                                                        and not isinstance(v, (GoField, NoGoField))}
-        self._value_trackers: list[ValueTracker] = []
+                                                        and not isinstance(v, ValueFieldMixin)}
         self.fields = fields
     
     def __getitem__(self, name: str) -> Field:
@@ -69,10 +67,10 @@ class Brain:
         self.generate_behavior()
     
     def estimate_value(self, reward: float | None = None) -> None:
-        for tracker in self._value_trackers:
+        for name, field in self._value_fields.items():
             if reward is None:
-                reward = tracker.compute_intrinsic_reward()
-            tracker.update_values(reward)
+                reward = self.compute_intrinsic_reward()
+            field.update_values(reward)
 
     def activate_apical_segments(self) -> None:
         """Activate apical segments in Go/NoGo fields based on current column states."""
@@ -101,10 +99,12 @@ class Brain:
         """
         for field in self._column_fields.values():
             field.compute(learn=learn)
-        for field in self._go_fields.values():
+        for field in self._value_fields.values():
             field.compute(learn=learn)
-        for field in self._nogo_fields.values():
-            field.compute(learn=learn)
+    
+    def compute_intrinsic_reward(self) -> float:
+        """Compute an intrinsic reward signal"""
+        raise NotImplementedError("Needs Implementation")
 
     def print_stats(self) -> None:
         """Print statistics from the column field."""

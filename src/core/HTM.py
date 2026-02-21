@@ -11,6 +11,7 @@ from typing import (
 )
 
 from statistics import fmean, pstdev
+from sungur import ValueFieldMixin
 
 
 # Constants
@@ -148,16 +149,10 @@ class Synapse:
         return self.source_cell.prev_active
 
 class ApicalSynapse(Synapse):
-    """Apical synapse connecting to a higher-level cortical field (checks predictive state)."""
+    """Distal synapse connecting to a source cell."""
 
     def __init__(self, source_cell: 'Cell', permanence: float) -> None:
         super().__init__(source_cell, permanence)
-
-    @property
-    def active(self) -> bool:
-        """Return whether the source cell is currently predictive."""
-        return self.source_cell.predictive and self.permanence >= CONNECTED_PERM
-
 
 class DistalSynapse(Synapse):
     """Distal synapse connecting to a source cell."""
@@ -259,23 +254,8 @@ class Segment(Active, Learning, Matching):
                 kept.append(syn)
         self.synapses = kept
 
+
 class ApicalSegment(Segment):
-    """Apical segment connecting to a higher-level cortical field."""
-    def __init__(
-        self,
-        parent_cell: 'Cell',
-        synapses: Optional[List[ApicalSynapse]] = None,
-    ) -> None:
-        super().__init__(parent_cell, synapses, synapse_cls=ApicalSynapse)
-
-    def activate_segment(self) -> None:
-        if self.is_potentially_active():
-            self.set_matching()
-            if self.is_active():
-                self.set_active()
-                self.parent_cell.set_predictive()
-
-class GoNoGoApicalSegment(Active, Learning, Matching):
     """Apical segment with competing Go (D1) and NoGo (D2) synapse populations.
 
     Models the apical tuft of a Layer 5 neuron receiving input from both
@@ -288,13 +268,14 @@ class GoNoGoApicalSegment(Active, Learning, Matching):
     NoGo synapses strengthen on negative error (mirrored signs, one adapt call).
     """
 
-    def __init__(self, parent_cell: 'Cell') -> None:
-        super().__init__()
+    def __init__(self, parent_cell: 'Cell', go_field: 'Field', nogo_field: 'Field') -> None:
         self.parent_cell = parent_cell
-        self.go_synapses: List[Synapse] = []
-        self.nogo_synapses: List[Synapse] = []
-        self.go_max_synapses = int(MAX_SYNAPSE_PCT * len(parent_cell.go_field.cells))
-        self.nogo_max_synapses = int(MAX_SYNAPSE_PCT * len(parent_cell.nogo_field.cells))
+        self.go_field = go_field
+        self.nogo_field = nogo_field
+        self.go_synapses: List[ApicalSynapse] = []
+        self.nogo_synapses: List[ApicalSynapse] = []
+        self.go_max_synapses = int(MAX_SYNAPSE_PCT * len(go_field.cells))
+        self.nogo_max_synapses = int(MAX_SYNAPSE_PCT * len(nogo_field.cells))
 
     def _go_score(self) -> int:
         return sum(1 for s in self.go_synapses if s.active)
@@ -315,7 +296,7 @@ class GoNoGoApicalSegment(Active, Learning, Matching):
             self.set_active()
             self.parent_cell.set_nogo_depolarized()
 
-    def adapt(self, td_error: float) -> None:
+    def adapt(self) -> None:
         """Adapt both synapse populations using a signed TD error.
 
         Go synapses strengthen when td_error > 0 (unexpected reward).
@@ -323,21 +304,27 @@ class GoNoGoApicalSegment(Active, Learning, Matching):
         Both populations decay at 2x rate when their respective source cells
         were not active, matching Equations 4.2 and 4.3 in the thesis.
         """
-        dec_strength = abs(td_error) * 2.0
+        go_td_error = self.go_field.avg_error
+        go_dec_strength = abs(go_td_error) * 2.0
 
         kept = []
-        for syn in self.go_synapses:
-            increase = syn.source_cell.prev_active and td_error > 0
-            strength = abs(td_error) if increase else dec_strength
-            syn._adjust_permanence(increase=increase, strength=strength)
-            if syn.permanence > 0.0:
-                kept.append(syn)
-        self.go_synapses = kept
+        if go_td_error > 0:
+            for syn in self.go_synapses:
+                increase = syn.source_cell.prev_active
+                strength = abs(go_td_error) if increase else go_dec_strength
+                syn._adjust_permanence(increase=increase, strength=strength)
+                if syn.permanence > 0.0:
+                    kept.append(syn)
+            self.go_synapses = kept
 
+        nogo_td_error = self.nogo_field.avg_error
+        nogo_dec_strength = abs(nogo_td_error) * 2.0
+
+        if nogo_td_error < 0:
         kept = []
         for syn in self.nogo_synapses:
-            increase = syn.source_cell.prev_active and td_error < 0
-            strength = abs(td_error) if increase else dec_strength
+            increase = syn.source_cell.prev_active and nogo_td_error < 0
+            strength = abs(nogo_td_error) if increase else nogo_dec_strength
             syn._adjust_permanence(increase=increase, strength=strength)
             if syn.permanence > 0.0:
                 kept.append(syn)
@@ -354,8 +341,8 @@ class GoNoGoApicalSegment(Active, Learning, Matching):
                 for cell in candidates[:growable]:
                     synapses.append(Synapse(source_cell=cell, permanence=INITIAL_PERMANENCE))
 
-        _grow(self.go_synapses,   self.go_max_synapses,   self.parent_cell.go_field.prev_winner_cells)
-        _grow(self.nogo_synapses, self.nogo_max_synapses, self.parent_cell.nogo_field.prev_winner_cells)
+        _grow(self.go_synapses,   self.go_max_synapses,   self.go_field.prev_winner_cells)
+        _grow(self.nogo_synapses, self.nogo_max_synapses, self.nogo_field.prev_winner_cells)
 
     def potential_prev_active_synapses(self) -> List[Synapse]:
         return [s for s in self.go_synapses + self.nogo_synapses if s.source_cell.prev_active]
@@ -388,27 +375,16 @@ class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
         self,
         parent_column: 'Column|None' = None,
         distal_field: 'Field|None' = None,
-        go_field: 'Field|None' = None,
-        nogo_field: 'Field|None' = None,
     ) -> None:
         super().__init__()
         self.parent_column = parent_column
         self.distal_field = distal_field
-        self.go_field = go_field
-        self.nogo_field = nogo_field
         self.segments: List[Segment] = []
-        self.apical_segments: List[GoNoGoApicalSegment] = []
+        self.apical_segments: List[ApicalSegment] = []
         self.active_duty_cycle: float = 0.0
 
-    def initialize(
-        self,
-        distal_field: 'Field',
-        go_field: 'Field|None' = None,
-        nogo_field: 'Field|None' = None,
-    ) -> None:
+    def initialize(self, distal_field: 'Field') -> None:
         self.distal_field = distal_field
-        self.go_field = go_field
-        self.nogo_field = nogo_field
 
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
@@ -484,7 +460,7 @@ class Column(Active, Predictive, Bursting):
         return list(chain.from_iterable(cell.segments for cell in self.cells))
 
     @property
-    def apical_segments(self) -> List[GoNoGoApicalSegment]:
+    def apical_segments(self) -> List[ApicalSegment]:
         """Return all apical segments on all cells in this column."""
         return list(chain.from_iterable(cell.apical_segments for cell in self.cells))
 
@@ -558,8 +534,8 @@ class ColumnField(Field):
         non_spatial: bool = False,
         non_temporal: bool = False,
         duty_cycle_period: int = DUTY_CYCLE_PERIOD,
-        go_field: 'ColumnField|None' = None,
-        nogo_field: 'ColumnField|None' = None,
+        go_field: 'ValueFieldMixin|None' = None,
+        nogo_field: 'ValueFieldMixin|None' = None,
     ) -> None:
         self.num_columns = num_columns
         self.cells_per_column = cells_per_column
@@ -596,11 +572,7 @@ class ColumnField(Field):
         super().__init__(chain.from_iterable(column.cells for column in self.columns))
         for column in self.columns:
             for cell in column.cells:
-                cell.initialize(
-                    distal_field=self,
-                    go_field=self.go_field,
-                    nogo_field=self.nogo_field,
-                )
+                cell.initialize(distal_field=self)
 
         self.clear_states()
 
@@ -619,11 +591,7 @@ class ColumnField(Field):
                                 for column in chain.from_iterable(field.cells for field in fields))
             for column in self.columns:
                 for cell in column.cells:
-                    cell.initialize(
-                        distal_field=self,
-                        go_field=self.go_field,
-                        nogo_field=self.nogo_field,
-                    )
+                    cell.initialize(distal_field=self)
         else:
             for column in self.columns:
                 column.input_field = self.input_field
@@ -761,9 +729,6 @@ class ColumnField(Field):
                     winner_cell = column.least_used_cell
                     learning_segment = Segment(parent_cell=winner_cell)
                     winner_cell.segments.append(learning_segment)  # Same as 1) L35
-                    if self.go_field and self.nogo_field:
-                        apical_segment = GoNoGoApicalSegment(parent_cell=winner_cell)
-                        winner_cell.apical_segments.append(apical_segment)
 
                 winner_cell.set_winner()              # Same as 2) L37
                 learning_segment.set_learning()      # Same as 1) L39
@@ -949,11 +914,6 @@ class InputField(Field):
 class OutputField(InputField):
     pass
 
-class GoField(ColumnField):
-    """Marker subclass: D1 striatal (Go) pathway ColumnField."""
-
-class NoGoField(ColumnField):
-    """Marker subclass: D2 striatal (NoGo) pathway ColumnField."""
 
 input_field = Field(cells={Cell() for _ in range(10)})
 
