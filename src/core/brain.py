@@ -6,7 +6,7 @@ for encoding inputs and computing temporal memory in a single step.
 
 from typing import Any
 
-from core.HTM import ColumnField, InputField, Field, OutputField, GoField, NoGoField
+from core.HTM import ColumnField, InputField, Field, OutputField
 from core.sungur import ValueFieldMixin
 
 
