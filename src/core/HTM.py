@@ -256,96 +256,79 @@ class Segment(Active, Learning, Matching):
 
 
 class ApicalSegment(Segment):
-    """Apical segment with competing Go (D1) and NoGo (D2) synapse populations.
+    """Apical segment sampling from a single value field (Go or NoGo).
 
-    Models the apical tuft of a Layer 5 neuron receiving input from both
-    striatal D1 (Go) and D2 (NoGo) populations on the same dendritic compartment.
-    The net score between the two populations determines whether the parent cell
-    becomes go_depolarized or nogo_depolarized. When they cancel the segment is
-    silent, avoiding any ambiguous cell state.
+    Each cell gets one ApicalSegment per value field. The cell combines
+    the activation scores from its apical segments into a net depolarization:
+    positive net -> go_depolarized, negative net -> nogo_depolarized.
 
-    Learning is TD-error driven: Go synapses strengthen on positive error,
-    NoGo synapses strengthen on negative error (mirrored signs, one adapt call).
+    Learning is TD-error driven via the field's avg_error.
     """
 
-    def __init__(self, parent_cell: 'Cell', go_field: 'Field', nogo_field: 'Field') -> None:
+    def __init__(self, parent_cell: 'Cell', field: 'Field', sign: int = 1) -> None:
         self.parent_cell = parent_cell
-        self.go_field = go_field
-        self.nogo_field = nogo_field
-        self.go_synapses: List[ApicalSynapse] = []
-        self.nogo_synapses: List[ApicalSynapse] = []
-        self.go_max_synapses = int(MAX_SYNAPSE_PCT * len(go_field.cells))
-        self.nogo_max_synapses = int(MAX_SYNAPSE_PCT * len(nogo_field.cells))
+        self.field = field
+        self.sign = sign  # +1 for Go, -1 for NoGo
+        self.synapses: List[ApicalSynapse] = []
+        self.max_synapses = int(MAX_SYNAPSE_PCT * len(field.cells))
+        self.active = False
+        self.prev_active = False
+        self.learning = False
+        self.prev_learning = False
+        self.matching = False
+        self.prev_matching = False
 
-    def _go_score(self) -> int:
-        return sum(1 for s in self.go_synapses if s.active)
+    def score(self) -> int:
+        """Count of active connected synapses."""
+        return sum(1 for s in self.synapses if s.active)
 
-    def _nogo_score(self) -> int:
-        return sum(1 for s in self.nogo_synapses if s.active)
+    def signed_score(self) -> int:
+        """Score weighted by sign (+1 for Go, -1 for NoGo)."""
+        return self.sign * self.score()
 
     def activate_segment(self) -> None:
-        go = self._go_score()
-        nogo = self._nogo_score()
-        if go > 0 or nogo > 0:
+        raise NotImplementedError("ApicalSegment activation is handled in Cell.depolarize_apical()")
+        s = self.score()
+        if s > 0:
             self.set_matching()
-        net = go - nogo
-        if net > 0:
             self.set_active()
-            self.parent_cell.set_go_depolarized()
-        elif net < 0:
-            self.set_active()
-            self.parent_cell.set_nogo_depolarized()
 
     def adapt(self) -> None:
-        """Adapt both synapse populations using a signed TD error.
+        """Adapt synapses using the field's TD error.
 
-        Go synapses strengthen when td_error > 0 (unexpected reward).
-        NoGo synapses strengthen when td_error < 0 (unexpected punishment).
-        Both populations decay at 2x rate when their respective source cells
-        were not active, matching Equations 4.2 and 4.3 in the thesis.
+        Strengthens synapses to previously active cells when error sign
+        matches segment sign (Go strengthens on positive error,
+        NoGo strengthens on negative error).
         """
-        go_td_error = self.go_field.avg_error
-        go_dec_strength = abs(go_td_error) * 2.0
+        td_error = self.field.avg_error
+        # Go segments learn on positive error, NoGo on negative
+         
+        should_strengthen = (self.sign > 0 and td_error > 0) or (self.sign < 0 and td_error < 0)
+        if not should_strengthen:
+            return
 
+        dec_strength = abs(td_error) * 2.0
         kept = []
-        if go_td_error > 0:
-            for syn in self.go_synapses:
-                increase = syn.source_cell.prev_active
-                strength = abs(go_td_error) if increase else go_dec_strength
-                syn._adjust_permanence(increase=increase, strength=strength)
-                if syn.permanence > 0.0:
-                    kept.append(syn)
-            self.go_synapses = kept
-
-        nogo_td_error = self.nogo_field.avg_error
-        nogo_dec_strength = abs(nogo_td_error) * 2.0
-
-        if nogo_td_error < 0:
-        kept = []
-        for syn in self.nogo_synapses:
-            increase = syn.source_cell.prev_active and nogo_td_error < 0
-            strength = abs(nogo_td_error) if increase else nogo_dec_strength
-            syn._adjust_permanence(increase=increase, strength=strength)
+        for syn in self.synapses:
+            increase = syn.source_cell.prev_active
+            s = abs(td_error) if increase else dec_strength
+            syn._adjust_permanence(increase=increase, strength=s)
             if syn.permanence > 0.0:
                 kept.append(syn)
-        self.nogo_synapses = kept
+        self.synapses = kept
 
-    def grow(self) -> None:
-        """Grow new synapses toward both Go (D1) and NoGo (D2) winner cells."""
-        def _grow(synapses: List[Synapse], max_syn: int, winner_cells: Set['Cell']) -> None:
-            growable = int((max_syn - len(synapses)) * GROWTH_STRENGTH)
-            if growable > 0:
-                existing = {s.source_cell for s in synapses}
-                candidates = list(winner_cells - existing - {self.parent_cell})
-                random.shuffle(candidates)
-                for cell in candidates[:growable]:
-                    synapses.append(Synapse(source_cell=cell, permanence=INITIAL_PERMANENCE))
-
-        _grow(self.go_synapses,   self.go_max_synapses,   self.go_field.prev_winner_cells)
-        _grow(self.nogo_synapses, self.nogo_max_synapses, self.nogo_field.prev_winner_cells)
+    def grow(self, strength: float = 1.0) -> None:
+        """Grow new synapses toward winner cells in the field."""
+        growable = int((self.max_synapses - len(self.synapses)) * GROWTH_STRENGTH * strength)
+        if growable > 0:
+            existing = {s.source_cell for s in self.synapses}
+            candidates = list(self.field.prev_winner_cells - existing - {self.parent_cell})
+            random.shuffle(candidates)
+            for cell in candidates[:growable]:
+                self.synapses.append(ApicalSynapse(source_cell=cell, permanence=INITIAL_PERMANENCE))
 
     def potential_prev_active_synapses(self) -> List[Synapse]:
-        return [s for s in self.go_synapses + self.nogo_synapses if s.source_cell.prev_active]
+        return [s for s in self.synapses if s.source_cell.prev_active]
 
     def advance_state(self) -> None:
         self.prev_active = self.active
@@ -366,9 +349,10 @@ class ApicalSegment(Segment):
 class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
     """Single cell within a column or layer.
 
-    Holds distal segments for temporal sequence memory and, when go_field and
-    nogo_field are wired up, a GoNoGoApicalSegment for reward-modulated
-    voluntary activation via D1/D2 striatal pathways.
+    Holds distal segments for temporal sequence memory and apical segments
+    for reward-modulated voluntary activation. Go and NoGo apical segments
+    each sample from their respective value fields; the cell combines their
+    scores into a net depolarization number.
     """
 
     def __init__(
@@ -380,11 +364,28 @@ class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
         self.parent_column = parent_column
         self.distal_field = distal_field
         self.segments: List[Segment] = []
-        self.apical_segments: List[ApicalSegment] = []
+        self.go_segments: List[ApicalSegment] = []
+        self.nogo_segments: List[ApicalSegment] = []
         self.active_duty_cycle: float = 0.0
+
+    @property
+    def apical_segments(self) -> List[ApicalSegment]:
+        """All apical segments (go + nogo) for iteration."""
+        return self.go_segments + self.nogo_segments
 
     def initialize(self, distal_field: 'Field') -> None:
         self.distal_field = distal_field
+
+    def depolarize_apical(self) -> None:
+        """Activate apical segments and combine into net go/nogo depolarization."""
+        for seg in self.apical_segments:
+            seg.activate_segment()
+
+        net = sum(seg.signed_score() for seg in self.apical_segments)
+        if net > 0:
+            self.set_go_depolarized()
+        elif net < 0:
+            self.set_nogo_depolarized()
 
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
@@ -634,7 +635,7 @@ class ColumnField(Field):
             column.clear_state()
         self._prev_winner_cells = set()
 
-    def compute(self, learn: bool = True, td_error: float = 0.0) -> None:
+    def compute(self, learn: bool = True) -> None:
         self.advance_states()
 
         if self.non_spatial:
@@ -660,7 +661,7 @@ class ColumnField(Field):
             self.depolarize_cells()
 
             if learn:
-                self.learn(td_error=td_error)
+                self.learn()
 
         self.set_prediction()
 
@@ -737,10 +738,8 @@ class ColumnField(Field):
         for column in self.columns:
             for segment in column.segments:
                 segment.activate_segment()
-            for segment in column.apical_segments:
-                segment.activate_segment()
 
-    def learn(self, td_error: float = 0.0) -> None:
+    def learn(self) -> None:
         for column in self.active_columns:
             if not column.bursting:
                 for cell in column.cells:
@@ -763,11 +762,6 @@ class ColumnField(Field):
                         if segment.matching:
                             segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
 
-        if self.go_field and self.nogo_field:
-            for cell in self.cells:
-                for segment in cell.apical_segments:
-                    segment.grow()
-                    segment.adapt(td_error=td_error)
 
     def set_prediction(self) -> List[Field]:
         """Propagate predictive state from columns back to input fields."""
