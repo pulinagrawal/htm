@@ -7,7 +7,7 @@ for encoding inputs and computing temporal memory in a single step.
 from typing import Any
 
 from core.HTM import ColumnField, InputField, Field, OutputField
-from core.sungur import ValueFieldMixin
+from core.sungur import ValueField
 
 
 class Brain:
@@ -34,10 +34,19 @@ class Brain:
         self._output_fields: dict[str, OutputField] = {k:v for k,v in fields.items() if isinstance(v, OutputField)}
         self._input_fields: dict[str, InputField] = {k:v for k,v in fields.items() if isinstance(v, InputField)
                                                       and not isinstance(v, OutputField)}
-        self._value_fields: dict[str, ValueFieldMixin] = {k:v for k,v in fields.items() if isinstance(v, ValueFieldMixin)}
+        self._value_fields: dict[str, ValueField] = {k:v for k,v in fields.items() if isinstance(v, ValueField)}
         self._column_fields: dict[str, ColumnField] = {k:v for k,v in fields.items() if isinstance(v, ColumnField)
-                                                        and not isinstance(v, ValueFieldMixin)}
+                                                        and not isinstance(v, ValueField)}
         self.fields = fields
+
+        # Combined dicts for rendering — all fields that share the same visual shape
+        self.all_column_fields: dict[str, ColumnField] = {
+            k: v for k, v in fields.items() if isinstance(v, ColumnField)
+        }
+        self.all_input_fields: dict[str, InputField] = {
+            k: v for k, v in fields.items()
+            if isinstance(v, InputField) and not isinstance(v, ColumnField)
+        }
     
     def __getitem__(self, name: str) -> Field:
         return self.fields[name]
@@ -62,9 +71,11 @@ class Brain:
         """
         self.encode_only(inputs)
         self.compute_only(learn=learn)
+        if 'reward' in inputs:
+            reward = inputs['reward']
         self.estimate_value(reward)
-        self.activate_apical_segments()
-        self.generate_behavior()
+        self.activate_apical_segments(reward)
+        return self.generate_behavior()
     
     def estimate_value(self, reward: float | None = None) -> None:
         for name, field in self._value_fields.items():
@@ -72,24 +83,37 @@ class Brain:
                 reward = self.compute_intrinsic_reward()
             field.update_values(reward)
 
-    def activate_apical_segments(self) -> None:
+    def activate_apical_segments(self, reward: float | None) -> None:
         """Activate apical segments in Go/NoGo fields based on current column states."""
         for field in self.fields:
-            field.activate_apical_segments(self._column_fields)
+            if isinstance(self.fields[field], ColumnField):
+                self.fields[field].depolarize_apical()
+                self.fields[field].learn_apical() # Do not like this coupling, find a way to keep reward in brain
     
-    def generate_behavior(self):
-        return {name: field.decode() for name, field in self._output_fields.items()}
+    def generate_behavior(self) -> dict[str, Any]:
+        """Compute output fields and return decoded values.
+
+        Returns:
+            Dict mapping output field names to their decoded values,
+            suitable for feeding directly to an environment.
+        """
+        for field in self._output_fields.values():
+            field.compute()
+        behavior = {}
+        for name, field in self._output_fields.items():
+            result = field.decode()
+            behavior[name] = result["value"]
+        return behavior
 
     def encode_only(self, inputs: dict[str, Any]) -> None:
         """Encode inputs without computing (useful for getting predictions first).
-
+    
         Args:
             inputs: Dict mapping field names to input values.
         """
-        for name, value in inputs.items():
-            if name not in self._input_fields:
-                raise KeyError(f"Unknown input field: '{name}'")
-            self._input_fields[name].encode(value)
+        for name in self._input_fields:
+            if name in inputs:
+                self._input_fields[name].encode(inputs[name])
 
     def compute_only(self, learn: bool = True) -> None:
         """Compute column field without encoding (inputs already encoded).
@@ -97,6 +121,7 @@ class Brain:
         Args:
             learn: Whether to enable learning during this step.
         """
+        # TODO: No distinction between column and value fields right now
         for field in self._column_fields.values():
             field.compute(learn=learn)
         for field in self._value_fields.values():
@@ -115,7 +140,7 @@ class Brain:
     def reset(self) -> None:
         """Clear all states in the column field."""
         for field in self.fields:
-            field.reset()
+            self.fields[field].reset()
 
     def prediction(self) -> tuple[Any, ...]:
         """Get the current prediction for a specific input field.

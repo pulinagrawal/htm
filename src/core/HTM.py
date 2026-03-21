@@ -3,6 +3,7 @@ import copy
 import random
 from typing import (
     Any,
+    Callable,
     Iterable,
     List,
     Set,
@@ -11,7 +12,7 @@ from typing import (
 )
 
 from statistics import fmean, pstdev
-from sungur import ValueFieldMixin
+from encoder_layer.rdse import RDSEParameters
 
 
 # Constants
@@ -87,6 +88,11 @@ class Field:
         if n > len(self.cells):
             raise ValueError("Cannot sample more cells than are in the field.")
         return set(random.sample(self.cells, n))
+    
+    def reset(self) -> None:
+        """Reset all cells in the field to initial state."""
+        for cell in self.cells:
+            cell.clear_state()
 
     @property
     def active_cells(self) -> Set['Cell']:
@@ -359,11 +365,15 @@ class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
         self,
         parent_column: 'Column|None' = None,
         distal_field: 'Field|None' = None,
+        go_field: 'Field|None' = None,
+        nogo_field: 'Field|None' = None
     ) -> None:
         super().__init__()
         self.parent_column = parent_column
         self.distal_field = distal_field
-        self.segments: List[Segment] = []
+        self.go_field = go_field
+        self.nogo_field = nogo_field
+        self.distal_segments: List[Segment] = []
         self.go_segments: List[ApicalSegment] = []
         self.nogo_segments: List[ApicalSegment] = []
         self.active_duty_cycle: float = 0.0
@@ -372,6 +382,11 @@ class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
     def apical_segments(self) -> List[ApicalSegment]:
         """All apical segments (go + nogo) for iteration."""
         return self.go_segments + self.nogo_segments
+
+    @property
+    def segments(self) -> List[Segment]:
+        """All distal segments for iteration."""
+        return self.distal_segments+self.apical_segments
 
     def initialize(self, distal_field: 'Field') -> None:
         self.distal_field = distal_field
@@ -406,7 +421,7 @@ class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
         self.prev_nogo_depolarized = self.nogo_depolarized
         self.nogo_depolarized = False
 
-        for segment in self.segments:
+        for segment in self.distal_segments:
             segment.advance_state()
         for segment in self.apical_segments:
             segment.advance_state()
@@ -425,7 +440,7 @@ class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
 
         for segment in self.segments:
             segment.clear_state()
-        for segment in self.apical_segments:
+        for segment in self.segments:
             segment.clear_state()
 
 class Column(Active, Predictive, Bursting):
@@ -456,9 +471,9 @@ class Column(Active, Predictive, Bursting):
         return f"Column(id={id(self)})"
 
     @property
-    def segments(self) -> List[Segment]:
+    def distal_segments(self) -> List[Segment]:
         """Return all distal segments on all cells in this column."""
-        return list(chain.from_iterable(cell.segments for cell in self.cells))
+        return list(chain.from_iterable(cell.distal_segments for cell in self.cells))
 
     @property
     def apical_segments(self) -> List[ApicalSegment]:
@@ -468,8 +483,8 @@ class Column(Active, Predictive, Bursting):
     @property
     def least_used_cell(self) -> Cell:
         """Return the cell with the fewest segments."""
-        min_segments  = min(len(cell.segments) for cell in self.cells)
-        return random.choice([cell for cell in self.cells if len(cell.segments) == min_segments])
+        min_segments  = min(len(cell.distal_segments) for cell in self.cells)
+        return random.choice([cell for cell in self.cells if len(cell.distal_segments) == min_segments])
 
     def advance_state(self) -> None:
         self.prev_active = self.active
@@ -513,13 +528,14 @@ class Column(Active, Predictive, Bursting):
               syn._adjust_permanence(increase=False)
       self._update_connected_synapses()
 
-    def best_potential_prev_active_segment(self) -> Optional[Segment]:
+    def best_potential_prev_active_segment(self, segments: List[Segment]) -> Optional[Segment]:
         """Return the previously matching segment with the most previously active potential synapses."""
         best_segment = None
         best_score = -1
-        for segment in self.segments:
+        for segment in segments:
             if segment.prev_matching:
-                if score:=len(segment.potential_prev_active_synapses())> best_score:
+                score = len(segment.potential_prev_active_synapses())
+                if score > best_score:
                     best_score = score
                     best_segment = segment
         return best_segment
@@ -535,8 +551,8 @@ class ColumnField(Field):
         non_spatial: bool = False,
         non_temporal: bool = False,
         duty_cycle_period: int = DUTY_CYCLE_PERIOD,
-        go_field: 'ValueFieldMixin|None' = None,
-        nogo_field: 'ValueFieldMixin|None' = None,
+        go_field: 'ValueField|None' = None,
+        nogo_field: 'ValueField|None' = None,
     ) -> None:
         self.num_columns = num_columns
         self.cells_per_column = cells_per_column
@@ -570,7 +586,7 @@ class ColumnField(Field):
                 )
                 for _ in range(self.num_columns)
             ]
-        super().__init__(chain.from_iterable(column.cells for column in self.columns))
+        Field.__init__(self, cells=chain.from_iterable(column.cells for column in self.columns))
         for column in self.columns:
             for cell in column.cells:
                 cell.initialize(distal_field=self)
@@ -658,7 +674,7 @@ class ColumnField(Field):
         else:
             self.activate_cells()
 
-            self.depolarize_cells()
+            self.depolarize_distal()
 
             if learn:
                 self.learn()
@@ -708,12 +724,23 @@ class ColumnField(Field):
                 self.active_columns.append(col)
                 col.set_active()
 
+    def _select_or_create_learning_segment(self, column: Column, segments: List[Segment]) -> Tuple[Cell, Segment]:
+        if any(segment.prev_matching for segment in segments):  # Same as 1) L29
+            learning_segment = column.best_potential_prev_active_segment()  # Same as 1) L30
+            winner_cell = learning_segment.parent_cell
+        else:
+            winner_cell = column.least_used_cell
+            learning_segment = Segment(parent_cell=winner_cell)
+            winner_cell.distal_segments.append(learning_segment)  # Same as 1) L35
+
+        return winner_cell, learning_segment
+                
     def activate_cells(self) -> None:
         for column in self.active_columns:
             if any(cell.prev_predictive for cell in column.cells): # Same as 1) L3
                 column.set_predictive()
                 for cell in column.cells:
-                    for segment in cell.segments:
+                    for segment in cell.distal_segments:
                         if segment.prev_active:                        # Same as 1) L11
                             segment.parent_cell.set_active()
                             segment.parent_cell.set_winner()          # Same as 1) L13
@@ -723,34 +750,48 @@ class ColumnField(Field):
                 column.set_bursting()
                 for cell in column.cells:
                     cell.set_active()
-                if any(segment.prev_matching for segment in column.segments):  # Same as 1) L29
-                    learning_segment = column.best_potential_prev_active_segment()  # Same as 1) L30
+                if any(segment.prev_matching for segment in column.distal_segments):  # Same as 1) L29
+                    learning_segment = column.best_potential_prev_active_segment(column.distal_segments)  # Same as 1) L30
                     winner_cell = learning_segment.parent_cell
                 else:
                     winner_cell = column.least_used_cell
                     learning_segment = Segment(parent_cell=winner_cell)
-                    winner_cell.segments.append(learning_segment)  # Same as 1) L35
+                    winner_cell.distal_segments.append(learning_segment)  # Same as 1) L35
 
                 winner_cell.set_winner()              # Same as 2) L37
                 learning_segment.set_learning()      # Same as 1) L39
 
-    def depolarize_cells(self) -> None:
+    def depolarize_distal(self) -> None:
         for column in self.columns:
-            for segment in column.segments:
-                segment.activate_segment()
+            for cell in column.cells:
+                for segment in cell.distal_segments:
+                    segment.activate_segment()
+    
+    def depolarize_apical(self) -> None:
+        for column in self.columns:
+            for cell in column.cells:
+                cell.depolarize_apical() 
+    
+    def learn_apical(self) -> None:
+        for column in self.columns:
+            for cell in column.cells:
+                for segment in cell.apical_segments:
+                    segment.adapt()
+                    segment.grow()
+
 
     def learn(self) -> None:
         for column in self.active_columns:
             if not column.bursting:
                 for cell in column.cells:
-                    for segment in cell.segments:
+                    for segment in cell.distal_segments:
                         if segment.learning:
                             segment.grow()               # Same as 1) L22-24
                             segment.adapt()               # Same as 1) L16-20
 
         for column in self.bursting_columns:
             for cell in column.cells:
-                for segment in cell.segments:
+                for segment in cell.distal_segments:
                     if segment.learning:               # Same as 1) L40-48
                         segment.grow()               
                         segment.adapt(strength=1.0)          # Same as 1) L42-44 
@@ -758,7 +799,7 @@ class ColumnField(Field):
         for column in self.columns:
             if not column.active:
                 for cell in column.cells:
-                    for segment in cell.segments:
+                    for segment in cell.distal_segments:
                         if segment.matching:
                             segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
 
@@ -805,8 +846,8 @@ class ColumnField(Field):
                 f"| {label:<22}| {mean_str:>8} ± {std_str:<8}| {min_str:>8} | {max_str:>8} |"
             )
 
-        segments_per_cell = [len(cell.segments) for cell in self.cells]
-        all_segments = [segment for cell in self.cells for segment in cell.segments]
+        segments_per_cell = [len(cell.distal_segments) for cell in self.cells]
+        all_segments = [segment for cell in self.cells for segment in cell.distal_segments]
         synapses_per_segment = [len(segment.synapses) for segment in all_segments]
         all_synapses = [syn for segment in all_segments for syn in segment.synapses]
         permanences = [syn.permanence for syn in all_synapses]
@@ -906,9 +947,243 @@ class InputField(Field):
             cell.clear_state()
 
 class OutputField(InputField):
-    pass
+    """InputField-like output layer with learnable connections to a source field.
 
+    - Behaves like InputField for encode/decode/state handling.
+    - Each output cell has learnable synapses to cells in `input_field`.
+    - Random activation is modulated by connected Go and NoGo depolarizations.
+    """
 
-input_field = Field(cells={Cell() for _ in range(10)})
+    def __init__(
+        self,
+        input_field: Field,
+        encoder_params: Any | None = None,
+        size: int | None = None,
+        base_activation_probability: float = 0.1,
+        go_gain: float = 0.05,
+        nogo_gain: float = 0.1,
+        connected_perm: float = CONNECTED_PERM,
+        decode_confidence_threshold: float = 0.5,
+        random_action_picker: Callable[[list[Any]], Any] | None = None,
+    ) -> None:
+        if encoder_params is None:
+            encoder_size = size if size is not None else max(1, len(input_field.cells))
+            active_bits = max(1, min(16, encoder_size))
+            encoder_params = RDSEParameters(
+                size=encoder_size,
+                active_bits=active_bits,
+                sparsity=0.0,
+                radius=0.0,
+                resolution=1.0,
+                category=False,
+                seed=1,
+            )
+        super().__init__(encoder_params=encoder_params, size=size)
+        self.input_field = input_field
+        self.base_activation_probability = base_activation_probability
+        self.go_gain = go_gain
+        self.nogo_gain = nogo_gain
+        self.connected_perm = connected_perm
+        self.decode_confidence_threshold = max(0.0, min(1.0, decode_confidence_threshold))
+        self.random_action_picker = random_action_picker
+        self._output_synapses: dict[Cell, list[DistalSynapse]] = {cell: [] for cell in self.cells}
 
-ColumnField(input_fields=[input_field], num_columns=1)  # Dummy instance to avoid linter errors
+        for cell in self.cells:
+            cell.distal_field = self.input_field
+            self._grow_for_cell(cell, target_cells=self.input_field.cells)
+
+    def _connected_go_count(self, synapses: list[DistalSynapse]) -> int:
+        return sum(
+            1
+            for synapse in synapses
+            if synapse.permanence >= self.connected_perm and synapse.source_cell.go_depolarized
+        )
+
+    def _connected_nogo_count(self, synapses: list[DistalSynapse]) -> int:
+        return sum(
+            1
+            for synapse in synapses
+            if synapse.permanence >= self.connected_perm and synapse.source_cell.nogo_depolarized
+        )
+
+    def _adapt_cell_synapses(self, cell: Cell) -> None:
+        synapses = self._output_synapses[cell]
+        kept_synapses: list[DistalSynapse] = []
+        for synapse in synapses:
+            if synapse.source_cell.go_depolarized:
+                synapse._adjust_permanence(increase=True)
+            elif synapse.source_cell.nogo_depolarized:
+                synapse._adjust_permanence(increase=False)
+            if synapse.permanence > 0.0:
+                kept_synapses.append(synapse)
+        self._output_synapses[cell] = kept_synapses
+
+    def _grow_for_cell(self, cell: Cell, target_cells: Iterable[Cell]) -> None:
+        synapses = self._output_synapses[cell]
+        max_synapses = max(1, int(MAX_SYNAPSE_PCT * max(1, len(self.input_field.cells))))
+        if len(synapses) >= max_synapses:
+            return
+
+        existing_sources = {syn.source_cell for syn in synapses}
+        candidates = [candidate for candidate in target_cells if candidate not in existing_sources]
+        if not candidates:
+            return
+
+        random.shuffle(candidates)
+        growth_budget = max(1, int((max_synapses - len(synapses)) * GROWTH_STRENGTH))
+        for source_cell in candidates[:growth_budget]:
+            synapses.append(DistalSynapse(source_cell=source_cell, permanence=INITIAL_PERMANENCE))
+
+    def _activate_cells_from_action(self, action: Any) -> None:
+        encoded_bits = self.encoder.encode(action)
+        for cell in self.cells:
+            cell.active = False
+        for idx, cell in enumerate(self.cells):
+            if encoded_bits[idx]:
+                cell.set_active()
+
+    def _pick_random_action(self) -> Any | None:
+        candidates = self._encoder_action_candidates()
+        if not candidates:
+            return None
+        if self.random_action_picker is not None:
+            return self.random_action_picker(candidates)
+        return random.choice(candidates)
+
+    def _encoder_action_candidates(self) -> list[Any]:
+        return list(self.encoder.encoding_cache.keys())
+
+    def compute(self, learn: bool = True) -> None:
+        self.advance_states()
+
+        action = self.decode_from_probabilities(probabilities=self.activation_probabilities())
+        if action['confidence'] >= self.decode_confidence_threshold:
+            self._activate_cells_from_action(action['value'])
+            print(f'NON-RANDOM ACTION SELECTED')
+        else:
+            random_action = self._pick_random_action()
+            if random_action is not None:
+                self._activate_cells_from_action(random_action)
+
+        if learn:
+            pass
+
+    def compute_old(self, learn: bool = True) -> None:
+        self.advance_states()
+
+        source_cell_count = max(1, len(self.input_field.cells))
+        depolarized = None
+        if learn:
+            depolarized = [
+                source_cell
+                for source_cell in self.input_field.cells
+                if source_cell.go_depolarized or source_cell.nogo_depolarized
+            ]
+
+        for cell in self.cells:
+            synapses = self._output_synapses[cell]
+            connected_go = self._connected_go_count(synapses)
+            connected_nogo = self._connected_nogo_count(synapses)
+
+            go_modulation = self.go_gain * (connected_go / source_cell_count)
+            nogo_modulation = self.nogo_gain * (connected_nogo / source_cell_count)
+            activation_probability = max(0.0, min(1.0, (
+                self.base_activation_probability + go_modulation - nogo_modulation
+            )))
+
+            if activation_probability > random.random():
+                cell.set_active()
+
+        if learn:
+            self._adapt_cell_synapses(cell)
+            if depolarized:
+                self._grow_for_cell(cell, target_cells=depolarized)
+
+    def decode(self, state: str = "active", encoded: Field = None, candidates: Iterable[Any] | None = None):
+        decoded_value = None
+        confidence = None
+        try:
+            decoded_value, confidence = InputField.decode(
+                self,
+                state=state,
+                encoded=encoded,
+                candidates=candidates,
+            )
+        except ValueError:
+            pass
+        return {
+            "value": decoded_value,
+            "confidence": confidence,
+        }
+
+    def activation_probabilities(self) -> List[float]:
+        """Compute the activation probability of each output cell from Go/NoGo modulation.
+
+        Uses the same formula as compute() but returns the continuous
+        probabilities instead of stochastically sampling them.
+        """
+        source_cell_count = max(1, len(self.input_field.cells))
+        probabilities: List[float] = []
+        for cell in self.cells:
+            synapses = self._output_synapses[cell]
+            connected_go = self._connected_go_count(synapses)
+            connected_nogo = self._connected_nogo_count(synapses)
+            go_mod = self.go_gain * (connected_go / source_cell_count)
+            nogo_mod = self.nogo_gain * (connected_nogo / source_cell_count)
+            prob = max(0.0, min(1.0, self.base_activation_probability + go_mod - nogo_mod))
+            probabilities.append(prob)
+        return probabilities
+
+    def decode_from_probabilities(
+        self,
+        probabilities: List[float] | None = None,
+        candidates: Iterable[Any] | None = None,
+    ) -> dict:
+        """Decode using continuous activation probabilities instead of binary cell states.
+
+        For each candidate encoding, computes a weighted overlap by summing the
+        activation probabilities at positions where the encoding has a 1-bit.
+        Returns the candidate with the highest expected overlap.
+
+        Args:
+            probabilities: Per-cell activation probabilities. If None, computed
+                from the current Go/NoGo modulation state.
+            candidates: Values to consider. Defaults to the encoder's cache.
+        """
+        if probabilities is None:
+            probabilities = self.activation_probabilities()
+
+        if len(probabilities) != len(self.cells):
+            raise ValueError(
+                f"probabilities length ({len(probabilities)}) must match "
+                f"cell count ({len(self.cells)})"
+            )
+
+        search_values = (
+            list(candidates) if candidates is not None
+            else list(getattr(self.encoder, "_encoding_cache", {}).keys())
+        )
+        if not search_values:
+            return {"value": None, "confidence": 0.0, "probabilities": probabilities}
+
+        best_value: Any | None = None
+        best_score = -1.0
+
+        for candidate in search_values:
+            encoding = self.encoder._encoding_cache.get(candidate)
+            if encoding is None:
+                encoding = self.encoder.register_encoding(candidate)
+            score = sum(p for p, bit in zip(probabilities, encoding) if bit == 1)
+            if score > best_score:
+                best_score = score
+                best_value = candidate
+
+        active_bits = getattr(self.encoder, "_active_bits", None)
+        if active_bits is None or active_bits == 0:
+            active_bits = max(1, sum(1 for p in probabilities if p > 0.5))
+        confidence = best_score / active_bits
+
+        return {
+            "value": best_value,
+            "confidence": confidence,
+        }

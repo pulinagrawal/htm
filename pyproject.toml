@@ -16,3 +16,10 @@ dependencies = [
     "streamlit>=1.39.0",
     "tqdm>=4.67.1",
 ]
+
+[dependency-groups]
+dev = [
+    "gymnasium>=1.2.3",
+    "gymnasium[toy-text]>=1.2.3",
+    "ipython>=9.11.0",
+]

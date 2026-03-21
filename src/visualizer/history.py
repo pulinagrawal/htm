@@ -40,11 +40,11 @@ class History:
         """Capture current brain state into a snapshot."""
         snap = HTMSnapshot(timestep=timestep, inputs=inputs, predictions=predictions)
 
-        for name, f in brain._input_fields.items():
+        for name, f in brain.all_input_fields.items():
             snap.input_active[name] = [i for i, c in enumerate(f.cells) if c.active]
             snap.input_predictive[name] = [i for i, c in enumerate(f.cells) if c.predictive]
 
-        for name, f in brain._column_fields.items():
+        for name, f in brain.all_column_fields.items():
             snap.column_active_cells[name] = [
                 (ci, ji) for ci, col in enumerate(f.columns)
                 for ji, cell in enumerate(col.cells) if cell.active

@@ -92,13 +92,13 @@ class BrainRenderer:
         
         # Group fields by level
         levels: dict[int, list[tuple[str, Any, bool]]] = {}  # level -> [(name, field, is_column)]
-        for name, field in self.brain._input_fields.items():
+        for name, field in self.brain.all_input_fields.items():
             level = field_levels.get(name, 0)
             if level not in levels:
                 levels[level] = []
             levels[level].append((name, field, False))
         
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             level = field_levels.get(name, 1)
             if level not in levels:
                 levels[level] = []
@@ -178,7 +178,7 @@ class BrainRenderer:
         field_levels: dict[str, int] = {}
         
         # All standalone input fields start at level 0
-        for name in self.brain._input_fields:
+        for name in self.brain.all_input_fields:
             field_levels[name] = 0
         
         # Column fields are at level 1 + max level of their inputs
@@ -186,17 +186,17 @@ class BrainRenderer:
         changed = True
         while changed:
             changed = False
-            for name, col_field in self.brain._column_fields.items():
+            for name, col_field in self.brain.all_column_fields.items():
                 # Find the max level of input fields
                 max_input_level = -1
                 for input_field in col_field.input_fields:
                     # Find which field name this input_field corresponds to
-                    for input_name, named_field in self.brain._input_fields.items():
+                    for input_name, named_field in self.brain.all_input_fields.items():
                         if named_field is input_field:
                             max_input_level = max(max_input_level, field_levels.get(input_name, 0))
                             break
                     # Also check column fields as inputs
-                    for col_name, named_col_field in self.brain._column_fields.items():
+                    for col_name, named_col_field in self.brain.all_column_fields.items():
                         if named_col_field is input_field:
                             if col_name in field_levels:
                                 max_input_level = max(max_input_level, field_levels[col_name])
@@ -212,10 +212,10 @@ class BrainRenderer:
 
     def _build_cell_index(self):
         self._cell_id_to_pos.clear()
-        for name, field in self.brain._input_fields.items():
+        for name, field in self.brain.all_input_fields.items():
             for i, cell in enumerate(field.cells):
                 self._cell_id_to_pos[id(cell)] = self.layouts[name].cell_positions[(i, 0)]
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             for ci, col in enumerate(field.columns):
                 for ji, cell in enumerate(col.cells):
                     self._cell_id_to_pos[id(cell)] = self.layouts[name].cell_positions[(ci, ji)]
@@ -236,12 +236,12 @@ class BrainRenderer:
     # ------------------------------------------------------------------
 
     def render_initial(self, plotter: pv.Plotter):
-        for i, (name, field) in enumerate(self.brain._input_fields.items()):
+        for i, (name, field) in enumerate(self.brain.all_input_fields.items()):
             layout = self.layouts[name]
             color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
             self._render_input_field(plotter, name, field, layout, color)
 
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             self._render_column_field(plotter, name, field, layout)
 
@@ -388,7 +388,7 @@ class BrainRenderer:
     # ------------------------------------------------------------------
 
     def update_live(self, plotter: pv.Plotter):
-        for i, (name, field) in enumerate(self.brain._input_fields.items()):
+        for i, (name, field) in enumerate(self.brain.all_input_fields.items()):
             layout = self.layouts[name]
             n = len(field.cells)
             if n == 0:
@@ -424,7 +424,7 @@ class BrainRenderer:
             else:
                 self._add_empty_mesh(plotter, f"input_{name}")
 
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             # Handle hidden fields
             if not self.is_field_visible(name):
@@ -436,7 +436,7 @@ class BrainRenderer:
             self._render_segments_and_synapses(plotter, name, field, layout)
 
     def update_from_snapshot(self, plotter: pv.Plotter, snapshot: HTMSnapshot):
-        for i, (name, field) in enumerate(self.brain._input_fields.items()):
+        for i, (name, field) in enumerate(self.brain.all_input_fields.items()):
             layout = self.layouts[name]
             n = len(field.cells)
             if n == 0:
@@ -474,7 +474,7 @@ class BrainRenderer:
             else:
                 self._add_empty_mesh(plotter, f"input_{name}")
 
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             
             # Handle hidden fields
@@ -582,7 +582,7 @@ class BrainRenderer:
         syn_colors = []
 
         # Walk all segments to find connections involving selected cells
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             for ci, col in enumerate(field.columns):
                 for ji, cell in enumerate(col.cells):
@@ -668,7 +668,7 @@ class BrainRenderer:
                 best_depth = depth
                 result = info
 
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             for ci, col in enumerate(field.columns):
                 for ji, cell in enumerate(col.cells):
@@ -695,7 +695,7 @@ class BrainRenderer:
                             "matching": seg.matching,
                         })
 
-        for name, field in self.brain._input_fields.items():
+        for name, field in self.brain.all_input_fields.items():
             layout = self.layouts[name]
             for ci, cell in enumerate(field.cells):
                 cell_pos = layout.cell_positions[(ci, 0)]
@@ -712,7 +712,7 @@ class BrainRenderer:
         """Legacy point-based pick (kept for compatibility)."""
         best_dist = tolerance
         result = None
-        for name, field in self.brain._column_fields.items():
+        for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             for ci, col in enumerate(field.columns):
                 for ji, cell in enumerate(col.cells):
@@ -725,7 +725,7 @@ class BrainRenderer:
                                   "segments": len(cell.segments),
                                   "active": cell.active, "predictive": cell.predictive,
                                   "winner": cell.winner}
-        for name, field in self.brain._input_fields.items():
+        for name, field in self.brain.all_input_fields.items():
             layout = self.layouts[name]
             for ci, cell in enumerate(field.cells):
                 cell_pos = layout.cell_positions[(ci, 0)]

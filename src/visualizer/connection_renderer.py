@@ -49,7 +49,7 @@ class ConnectionRenderer:
                 # Bottom-most cell selected - this represents the column
                 field_name = sel["field"]
                 col_idx = sel["col"]
-                field = self.brain._column_fields.get(field_name)
+                field = self.brain.all_column_fields.get(field_name)
                 if field and col_idx < len(field.columns):
                     col = field.columns[col_idx]
                     col_pos = self.br.layouts[field_name].column_positions.get(col_idx)
@@ -92,7 +92,7 @@ class ConnectionRenderer:
     def render_proximal(self, plotter: pv.Plotter, column_field_name: str,
                         active_only: bool = True, max_connections: int = 500000):
         """Render proximal connections from input cells to column bases."""
-        field = self.brain._column_fields.get(column_field_name)
+        field = self.brain.all_column_fields.get(column_field_name)
         if not field:
             return
 

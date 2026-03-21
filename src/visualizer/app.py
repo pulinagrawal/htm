@@ -156,10 +156,10 @@ class HTMVisualizer:
 
     def _track_metrics(self, inputs, predictions):
         total_bursting = sum(
-            len(f.bursting_columns) for f in self.brain._column_fields.values()
+            len(f.bursting_columns) for f in self.brain.all_column_fields.values()
         )
         self.burst_history.append(total_bursting)
-        for name in self.brain._input_fields:
+        for name in self.brain.all_input_fields:
             if name in predictions and name in inputs:
                 pred, actual = predictions[name], inputs[name]
                 if isinstance(pred, (int, float)) and isinstance(actual, (int, float)):
@@ -178,7 +178,7 @@ class HTMVisualizer:
 
         self.conn_renderer.clear(self.plotter)
         if self.show_proximal:
-            for name in self.brain._column_fields:
+            for name in self.brain.all_column_fields:
                 self.conn_renderer.render_proximal(self.plotter, name, active_only=False)
 
         # Selection highlights + synapse tracing (distal)
@@ -477,7 +477,7 @@ class HTMVisualizer:
 
     def get_field_names(self) -> list[str]:
         """Return list of all field names."""
-        return list(self.brain._input_fields.keys()) + list(self.brain._column_fields.keys())
+        return list(self.brain.all_input_fields.keys()) + list(self.brain.all_column_fields.keys())
 
     def get_field_keys(self) -> dict[str, str]:
         """Return mapping of shortcut key -> field name."""
@@ -526,12 +526,12 @@ class HTMVisualizer:
         if snap:
             for name, val in snap.inputs.items():
                 lines.append(f"  {name}: {val:.4f}" if isinstance(val, float) else f"  {name}: {val}")
-            for name in self.brain._input_fields:
+            for name in self.brain.all_input_fields:
                 pred = snap.predictions.get(name)
                 if pred is not None:
                     lines.append(f"  pred({name}): {pred:.4f}" if isinstance(pred, float) else f"  pred({name}): {pred}")
             lines.append("")
-            for name in self.brain._column_fields:
+            for name in self.brain.all_column_fields:
                 n_active = len(snap.column_active_cols.get(name, []))
                 n_burst = len(snap.column_bursting.get(name, []))
                 n_pred = len(snap.column_predictive_cells.get(name, []))

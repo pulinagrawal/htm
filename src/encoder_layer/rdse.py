@@ -41,7 +41,7 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
         self._seed = self._parameters.seed
         self._encoding_cache: dict[float, List[int]] = {}
 
-        super().__init__(dimensions, self._size)
+        super().__init__(self._size)
 
     @property
     def size(self) -> int:

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from pathlib import Path
 import sys
-sys.path.append(str(Path(__file__).parent.parent))
+sys.path.append(str(Path(__file__).parent.parent.parent))
 from tqdm import tqdm
 from core.HTM import ColumnField, InputField
 from core.brain import Brain
