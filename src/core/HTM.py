@@ -172,19 +172,21 @@ class ProximalSynapse(Synapse):
         super().__init__(source_cell=source_cell, permanence=permanence)
 
 class Segment(Active, Learning, Matching):
-    """Distal segment composed of synapses to cells."""
+    """Segment composed of synapses to cells in a source field."""
 
     def __init__(
         self,
         parent_cell: 'Cell',
+        field: 'Field|None' = None,
         synapses: Optional[List[Synapse]] = None,
         synapse_cls = DistalSynapse
     ) -> None:
         super().__init__()
         self.parent_cell: 'Cell' = parent_cell
-        self.synapses: List[DistalSynapse] = synapses if synapses is not None else []
+        self.field: 'Field' = field if field is not None else parent_cell.distal_field
+        self.synapses: List[Synapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
-        self.max_synapses = int(MAX_SYNAPSE_PCT*len(self.parent_cell.distal_field.cells))
+        self.max_synapses = int(MAX_SYNAPSE_PCT * len(self.field.cells))
         self.synapse_cls = synapse_cls
         global debug
         if debug:
@@ -210,7 +212,6 @@ class Segment(Active, Learning, Matching):
             self.set_matching()
             if self.is_active():
                 self.set_active()
-                self.parent_cell.set_predictive()
 
     def advance_state(self) -> None:
         self.prev_active = self.active
@@ -230,20 +231,23 @@ class Segment(Active, Learning, Matching):
         self.matching = False
         self.prev_matching = False
 
-    def adapt(self, strength:float=1.0) -> None:
-        # Strengthen synapses to previously active cells
+    def adapt(self, strength:float=1.0, active_predicate: Callable[['Synapse'], bool] | None = None) -> None:
+        if active_predicate is None:
+            active_predicate = lambda syn: syn.source_cell.prev_active
         kept = []
         for syn in self.synapses:
-            syn._adjust_permanence(increase=syn.source_cell.prev_active, strength=strength)
+            syn._adjust_permanence(increase=active_predicate(syn), strength=strength)
             if syn.permanence > 0.0:
                 kept.append(syn)
         self.synapses = kept
 
-    def grow(self, strength:float=1.0) -> None:
-        """Grow new synapses to random cells in the distal field."""
+    def grow(self, strength:float=1.0, growth_candidates: Set['Cell'] | None = None) -> None:
+        """Grow new synapses to random cells in the source field."""
         growable_synapses = int((self.max_synapses - len(self.synapses))*GROWTH_STRENGTH*strength)
         if growable_synapses > 0:
-            potential_cells = list(self.parent_cell.distal_field.prev_winner_cells - {syn.source_cell for syn in self.synapses} - {self.parent_cell})
+            if growth_candidates is None:
+                growth_candidates = self.field.prev_winner_cells
+            potential_cells = list(growth_candidates - {syn.source_cell for syn in self.synapses} - {self.parent_cell})
             random.shuffle(potential_cells)
             cells_to_connect = potential_cells[:growable_synapses]
             for cell in cells_to_connect:
@@ -272,17 +276,8 @@ class ApicalSegment(Segment):
     """
 
     def __init__(self, parent_cell: 'Cell', field: 'Field', sign: int = 1) -> None:
-        self.parent_cell = parent_cell
-        self.field = field
+        super().__init__(parent_cell, field=field, synapse_cls=ApicalSynapse)
         self.sign = sign  # +1 for Go, -1 for NoGo
-        self.synapses: List[ApicalSynapse] = []
-        self.max_synapses = int(MAX_SYNAPSE_PCT * len(field.cells))
-        self.active = False
-        self.prev_active = False
-        self.learning = False
-        self.prev_learning = False
-        self.matching = False
-        self.prev_matching = False
 
     def score(self) -> int:
         """Count of active connected synapses."""
@@ -292,14 +287,7 @@ class ApicalSegment(Segment):
         """Score weighted by sign (+1 for Go, -1 for NoGo)."""
         return self.sign * self.score()
 
-    def activate_segment(self) -> None:
-        raise NotImplementedError("ApicalSegment activation is handled in Cell.depolarize_apical()")
-        s = self.score()
-        if s > 0:
-            self.set_matching()
-            self.set_active()
-
-    def adapt(self) -> None:
+    def adapt(self, strength: float=1.0) -> None:
         """Adapt synapses using the field's TD error.
 
         Strengthens synapses to previously active cells when error sign
@@ -308,7 +296,7 @@ class ApicalSegment(Segment):
         """
         td_error = self.field.avg_error
         # Go segments learn on positive error, NoGo on negative
-         
+
         should_strengthen = (self.sign > 0 and td_error > 0) or (self.sign < 0 and td_error < 0)
         if not should_strengthen:
             return
@@ -318,39 +306,10 @@ class ApicalSegment(Segment):
         for syn in self.synapses:
             increase = syn.source_cell.prev_active
             s = abs(td_error) if increase else dec_strength
-            syn._adjust_permanence(increase=increase, strength=s)
+            syn._adjust_permanence(increase=increase, strength=s*strength)
             if syn.permanence > 0.0:
                 kept.append(syn)
         self.synapses = kept
-
-    def grow(self, strength: float = 1.0) -> None:
-        """Grow new synapses toward winner cells in the field."""
-        growable = int((self.max_synapses - len(self.synapses)) * GROWTH_STRENGTH * strength)
-        if growable > 0:
-            existing = {s.source_cell for s in self.synapses}
-            candidates = list(self.field.prev_winner_cells - existing - {self.parent_cell})
-            random.shuffle(candidates)
-            for cell in candidates[:growable]:
-                self.synapses.append(ApicalSynapse(source_cell=cell, permanence=INITIAL_PERMANENCE))
-
-    def potential_prev_active_synapses(self) -> List[Synapse]:
-        return [s for s in self.synapses if s.source_cell.prev_active]
-
-    def advance_state(self) -> None:
-        self.prev_active = self.active
-        self.active = False
-        self.prev_learning = self.learning
-        self.learning = False
-        self.prev_matching = self.matching
-        self.matching = False
-
-    def clear_state(self) -> None:
-        self.active = False
-        self.prev_active = False
-        self.learning = False
-        self.prev_learning = False
-        self.matching = False
-        self.prev_matching = False
 
 class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
     """Single cell within a column or layer.
@@ -401,6 +360,13 @@ class Cell(Active, Winner, Predictive, GoDepolarized, NoGoDepolarized):
             self.set_go_depolarized()
         elif net < 0:
             self.set_nogo_depolarized()
+    
+    def depolarize_distal(self) -> None:
+        """Activate distal segments to set predictive state."""
+        for seg in self.distal_segments:
+            seg.activate_segment()
+            if seg.active:
+                self.set_predictive()
 
     def __repr__(self) -> str:
         return f"Cell(id={id(self)})"
@@ -480,11 +446,10 @@ class Column(Active, Predictive, Bursting):
         """Return all apical segments on all cells in this column."""
         return list(chain.from_iterable(cell.apical_segments for cell in self.cells))
 
-    @property
-    def least_used_cell(self) -> Cell:
-        """Return the cell with the fewest segments."""
-        min_segments  = min(len(cell.distal_segments) for cell in self.cells)
-        return random.choice([cell for cell in self.cells if len(cell.distal_segments) == min_segments])
+    def least_used_cell(self, segments_attr: str = 'distal_segments') -> Cell:
+        """Return the cell with the fewest segments of the given type."""
+        min_segments = min(len(getattr(cell, segments_attr)) for cell in self.cells)
+        return random.choice([cell for cell in self.cells if len(getattr(cell, segments_attr)) == min_segments])
 
     def advance_state(self) -> None:
         self.prev_active = self.active
@@ -528,17 +493,17 @@ class Column(Active, Predictive, Bursting):
               syn._adjust_permanence(increase=False)
       self._update_connected_synapses()
 
-    def best_potential_prev_active_segment(self, segments: List[Segment]) -> Optional[Segment]:
-        """Return the previously matching segment with the most previously active potential synapses."""
-        best_segment = None
-        best_score = -1
-        for segment in segments:
-            if segment.prev_matching:
-                score = len(segment.potential_prev_active_synapses())
-                if score > best_score:
-                    best_score = score
-                    best_segment = segment
-        return best_segment
+def best_potential_prev_active_segment(segments: List[Segment]) -> Optional[Segment]:
+    """Return the previously matching segment with the most previously active potential synapses."""
+    best_segment = None
+    best_score = -1
+    for segment in segments:
+        if segment.prev_matching:
+            score = len(segment.potential_prev_active_synapses())
+            if score > best_score:
+                best_score = score
+                best_segment = segment
+    return best_segment
 
 class ColumnField(Field):
     """A collection of columns."""
@@ -674,7 +639,10 @@ class ColumnField(Field):
         else:
             self.activate_cells()
 
-            self.depolarize_distal()
+            if learn:
+                self.select_learning_cells(segment_factory=lambda cell: Segment(parent_cell=cell))
+
+            self.depolarize()
 
             if learn:
                 self.learn()
@@ -682,6 +650,15 @@ class ColumnField(Field):
         self.set_prediction()
 
         self._update_duty_cycles()
+
+    def apical_compute(self, learn: bool = True) -> None:
+        self.select_learning_cells(segments_attr='go_segments',
+                                   segment_factory=lambda cell: ApicalSegment(parent_cell=cell, field=self.go_field, sign=1))
+        self.select_learning_cells(segments_attr='nogo_segments',
+                                   segment_factory=lambda cell: ApicalSegment(parent_cell=cell, field=self.nogo_field, sign=-1))
+        self.depolarize(segments_attr='apical_segments')
+        if learn:
+            self.learn(segments_attr='apical_segments')
 
     def activate_columns(self) -> None:
         self.activate_top_k_columns(int(len(self.columns) * DESIRED_LOCAL_SPARSITY))
@@ -724,82 +701,82 @@ class ColumnField(Field):
                 self.active_columns.append(col)
                 col.set_active()
 
-    def _select_or_create_learning_segment(self, column: Column, segments: List[Segment]) -> Tuple[Cell, Segment]:
-        if any(segment.prev_matching for segment in segments):  # Same as 1) L29
-            learning_segment = column.best_potential_prev_active_segment()  # Same as 1) L30
-            winner_cell = learning_segment.parent_cell
-        else:
-            winner_cell = column.least_used_cell
-            learning_segment = Segment(parent_cell=winner_cell)
-            winner_cell.distal_segments.append(learning_segment)  # Same as 1) L35
-
-        return winner_cell, learning_segment
-                
-    def activate_cells(self) -> None:
+    def activate_cells(self, segments_attr: str = 'distal_segments') -> None:
         for column in self.active_columns:
             if any(cell.prev_predictive for cell in column.cells): # Same as 1) L3
                 column.set_predictive()
                 for cell in column.cells:
-                    for segment in cell.distal_segments:
+                    for segment in getattr(cell, segments_attr):
                         if segment.prev_active:                        # Same as 1) L11
-                            segment.parent_cell.set_active()
-                            segment.parent_cell.set_winner()          # Same as 1) L13
-                            segment.set_learning()
+                            cell.set_active()
+                            cell.set_winner()          # Same as 1) L13
 
             if not any(cell.prev_predictive for cell in column.cells):  # Same as 1) L5
                 column.set_bursting()
                 for cell in column.cells:
                     cell.set_active()
-                if any(segment.prev_matching for segment in column.distal_segments):  # Same as 1) L29
-                    learning_segment = column.best_potential_prev_active_segment(column.distal_segments)  # Same as 1) L30
-                    winner_cell = learning_segment.parent_cell
+
+    def select_learning_cells(self, segments_attr: str = 'distal_segments',
+                              segment_factory: Callable[['Cell'], Segment] | None = None) -> None:
+        if segment_factory is None:
+            segment_factory = Segment
+        for column in self.active_columns:
+            if column.predictive:
+                for cell in column.cells:
+                    for segment in getattr(cell, segments_attr):
+                        if segment.prev_active:                        # Same as 1) L11
+                            segment.set_learning()
+
+            if column.bursting:
+                winner_cell = next((cell for cell in column.cells if cell.winner), None)
+                if winner_cell is not None: 
+                    learning_segment = best_potential_prev_active_segment(getattr(winner_cell, segments_attr))
+                    if learning_segment is None:
+                        learning_segment = segment_factory(winner_cell)
+                        getattr(winner_cell, segments_attr).append(learning_segment)
                 else:
-                    winner_cell = column.least_used_cell
-                    learning_segment = Segment(parent_cell=winner_cell)
-                    winner_cell.distal_segments.append(learning_segment)  # Same as 1) L35
+                    all_segments = list(chain.from_iterable(
+                        getattr(cell, segments_attr) for cell in column.cells
+                    ))
+                    if any(segment.prev_matching for segment in all_segments):  # Same as 1) L29
+                        learning_segment = best_potential_prev_active_segment(all_segments)  # Same as 1) L30
+                        winner_cell = learning_segment.parent_cell
+                    else:
+                        winner_cell = column.least_used_cell(segments_attr)
+                        learning_segment = segment_factory(winner_cell)
+                        getattr(winner_cell, segments_attr).append(learning_segment)  # Same as 1) L35
 
                 winner_cell.set_winner()              # Same as 2) L37
                 learning_segment.set_learning()      # Same as 1) L39
 
-    def depolarize_distal(self) -> None:
+    def depolarize(self, segments_attr: str = 'distal_segments') -> None:
         for column in self.columns:
             for cell in column.cells:
-                for segment in cell.distal_segments:
-                    segment.activate_segment()
-    
-    def depolarize_apical(self) -> None:
-        for column in self.columns:
-            for cell in column.cells:
-                cell.depolarize_apical() 
-    
-    def learn_apical(self) -> None:
-        for column in self.columns:
-            for cell in column.cells:
-                for segment in cell.apical_segments:
-                    segment.adapt()
-                    segment.grow()
+                if segments_attr == 'distal_segments':
+                    cell.depolarize_distal()
+                elif segments_attr == 'apical_segments':
+                    cell.depolarize_apical()
 
-
-    def learn(self) -> None:
+    def learn(self, segments_attr: str = 'distal_segments') -> None:
         for column in self.active_columns:
             if not column.bursting:
                 for cell in column.cells:
-                    for segment in cell.distal_segments:
+                    for segment in getattr(cell, segments_attr):
                         if segment.learning:
                             segment.grow()               # Same as 1) L22-24
                             segment.adapt()               # Same as 1) L16-20
 
         for column in self.bursting_columns:
             for cell in column.cells:
-                for segment in cell.distal_segments:
+                for segment in getattr(cell, segments_attr):
                     if segment.learning:               # Same as 1) L40-48
-                        segment.grow()               
-                        segment.adapt(strength=1.0)          # Same as 1) L42-44 
+                        segment.grow()
+                        segment.adapt(strength=1.0)          # Same as 1) L42-44
 
         for column in self.columns:
             if not column.active:
                 for cell in column.cells:
-                    for segment in cell.distal_segments:
+                    for segment in getattr(cell, segments_attr):
                         if segment.matching:
                             segment.weaken(PREDICTED_DECREMENT_PCT)  # Same as 1) L25-27
 
@@ -960,8 +937,8 @@ class OutputField(InputField):
         encoder_params: Any | None = None,
         size: int | None = None,
         base_activation_probability: float = 0.1,
-        go_gain: float = 0.05,
-        nogo_gain: float = 0.1,
+        go_gain: float = 1.0,
+        nogo_gain: float = 1.0,
         connected_perm: float = CONNECTED_PERM,
         decode_confidence_threshold: float = 0.5,
         random_action_picker: Callable[[list[Any]], Any] | None = None,
@@ -986,53 +963,28 @@ class OutputField(InputField):
         self.connected_perm = connected_perm
         self.decode_confidence_threshold = max(0.0, min(1.0, decode_confidence_threshold))
         self.random_action_picker = random_action_picker
-        self._output_synapses: dict[Cell, list[DistalSynapse]] = {cell: [] for cell in self.cells}
+        self._output_synapses: dict[Cell, Segment] = {}
 
         for cell in self.cells:
             cell.distal_field = self.input_field
-            self._grow_for_cell(cell, target_cells=self.input_field.cells)
+            segment = Segment(parent_cell=cell, field=self.input_field)
+            segment.max_synapses = len(self.input_field.cells)
+            segment.grow(strength=2.0, growth_candidates=set(self.input_field.cells))
+            self._output_synapses[cell] = segment
 
-    def _connected_go_count(self, synapses: list[DistalSynapse]) -> int:
+    def _connected_go_count(self, segment: Segment) -> int:
         return sum(
             1
-            for synapse in synapses
+            for synapse in segment.synapses
             if synapse.permanence >= self.connected_perm and synapse.source_cell.go_depolarized
         )
 
-    def _connected_nogo_count(self, synapses: list[DistalSynapse]) -> int:
+    def _connected_nogo_count(self, segment: Segment) -> int:
         return sum(
             1
-            for synapse in synapses
+            for synapse in segment.synapses
             if synapse.permanence >= self.connected_perm and synapse.source_cell.nogo_depolarized
         )
-
-    def _adapt_cell_synapses(self, cell: Cell) -> None:
-        synapses = self._output_synapses[cell]
-        kept_synapses: list[DistalSynapse] = []
-        for synapse in synapses:
-            if synapse.source_cell.go_depolarized:
-                synapse._adjust_permanence(increase=True)
-            elif synapse.source_cell.nogo_depolarized:
-                synapse._adjust_permanence(increase=False)
-            if synapse.permanence > 0.0:
-                kept_synapses.append(synapse)
-        self._output_synapses[cell] = kept_synapses
-
-    def _grow_for_cell(self, cell: Cell, target_cells: Iterable[Cell]) -> None:
-        synapses = self._output_synapses[cell]
-        max_synapses = max(1, int(MAX_SYNAPSE_PCT * max(1, len(self.input_field.cells))))
-        if len(synapses) >= max_synapses:
-            return
-
-        existing_sources = {syn.source_cell for syn in synapses}
-        candidates = [candidate for candidate in target_cells if candidate not in existing_sources]
-        if not candidates:
-            return
-
-        random.shuffle(candidates)
-        growth_budget = max(1, int((max_synapses - len(synapses)) * GROWTH_STRENGTH))
-        for source_cell in candidates[:growth_budget]:
-            synapses.append(DistalSynapse(source_cell=source_cell, permanence=INITIAL_PERMANENCE))
 
     def _activate_cells_from_action(self, action: Any) -> None:
         encoded_bits = self.encoder.encode(action)
@@ -1059,45 +1011,27 @@ class OutputField(InputField):
         action = self.decode_from_probabilities(probabilities=self.activation_probabilities())
         if action['confidence'] >= self.decode_confidence_threshold:
             self._activate_cells_from_action(action['value'])
-            print(f'NON-RANDOM ACTION SELECTED')
+            print('NON-RANDOM ACTION SELECTED')
         else:
             random_action = self._pick_random_action()
             if random_action is not None:
                 self._activate_cells_from_action(random_action)
 
         if learn:
-            pass
+            self.learn()
 
-    def compute_old(self, learn: bool = True) -> None:
-        self.advance_states()
-
-        source_cell_count = max(1, len(self.input_field.cells))
-        depolarized = None
-        if learn:
-            depolarized = [
-                source_cell
-                for source_cell in self.input_field.cells
-                if source_cell.go_depolarized or source_cell.nogo_depolarized
-            ]
-
+    def learn(self) -> None:
+        growth_targets = set(
+            cell for cell in self.input_field.cells
+            if cell.active or cell.go_depolarized or cell.nogo_depolarized
+        )
         for cell in self.cells:
-            synapses = self._output_synapses[cell]
-            connected_go = self._connected_go_count(synapses)
-            connected_nogo = self._connected_nogo_count(synapses)
+            if cell.prev_active:
+                segment = self._output_synapses[cell]
+                segment.adapt(active_predicate=lambda syn: syn.source_cell.active or syn.source_cell.go_depolarized or syn.source_cell.nogo_depolarized)
+                if growth_targets:
+                    segment.grow(growth_candidates=growth_targets)
 
-            go_modulation = self.go_gain * (connected_go / source_cell_count)
-            nogo_modulation = self.nogo_gain * (connected_nogo / source_cell_count)
-            activation_probability = max(0.0, min(1.0, (
-                self.base_activation_probability + go_modulation - nogo_modulation
-            )))
-
-            if activation_probability > random.random():
-                cell.set_active()
-
-        if learn:
-            self._adapt_cell_synapses(cell)
-            if depolarized:
-                self._grow_for_cell(cell, target_cells=depolarized)
 
     def decode(self, state: str = "active", encoded: Field = None, candidates: Iterable[Any] | None = None):
         decoded_value = None
@@ -1125,9 +1059,9 @@ class OutputField(InputField):
         source_cell_count = max(1, len(self.input_field.cells))
         probabilities: List[float] = []
         for cell in self.cells:
-            synapses = self._output_synapses[cell]
-            connected_go = self._connected_go_count(synapses)
-            connected_nogo = self._connected_nogo_count(synapses)
+            segment = self._output_synapses[cell]
+            connected_go = self._connected_go_count(segment)
+            connected_nogo = self._connected_nogo_count(segment)
             go_mod = self.go_gain * (connected_go / source_cell_count)
             nogo_mod = self.nogo_gain * (connected_nogo / source_cell_count)
             prob = max(0.0, min(1.0, self.base_activation_probability + go_mod - nogo_mod))

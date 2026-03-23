@@ -320,7 +320,6 @@ name = "htm"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "gymnasium" },
     { name = "matplotlib" },
     { name = "mmh3" },
     { name = "numpy" },
@@ -341,7 +340,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "gymnasium", specifier = ">=1.2.3" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "mmh3", specifier = ">=5.2.0" },
     { name = "numpy", specifier = ">=2.1.0" },
@@ -356,6 +354,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "gymnasium", specifier = ">=1.2.3" },
     { name = "gymnasium", extras = ["toy-text"], specifier = ">=1.2.3" },
     { name = "ipython", specifier = ">=9.11.0" },
 ]

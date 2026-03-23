@@ -74,7 +74,7 @@ class Brain:
         if 'reward' in inputs:
             reward = inputs['reward']
         self.estimate_value(reward)
-        self.activate_apical_segments(reward)
+        self.activate_apical_segments()
         return self.generate_behavior()
     
     def estimate_value(self, reward: float | None = None) -> None:
@@ -83,12 +83,11 @@ class Brain:
                 reward = self.compute_intrinsic_reward()
             field.update_values(reward)
 
-    def activate_apical_segments(self, reward: float | None) -> None:
+    def activate_apical_segments(self) -> None:
         """Activate apical segments in Go/NoGo fields based on current column states."""
         for field in self.fields:
             if isinstance(self.fields[field], ColumnField):
-                self.fields[field].depolarize_apical()
-                self.fields[field].learn_apical() # Do not like this coupling, find a way to keep reward in brain
+                self.fields[field].apical_compute()
     
     def generate_behavior(self) -> dict[str, Any]:
         """Compute output fields and return decoded values.
