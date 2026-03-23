@@ -48,9 +48,9 @@ class ValueField(ColumnField):
         self._field = self
         self.values = [0.0] * len(self._field.cells)
         self.traces = [0.0] * len(self._field.cells)
-        self.td_learning_rate = 0.1
-        self.td_discount = 0.9
-        self.trace_decay = 0.9
+        self.td_learning_rate = 0.3
+        self.td_discount = 0.5
+        self.trace_decay = 0.6
         self.avg_error = 0.0
         self._weight_fn = weight_fn or ValueField._default_weight
 

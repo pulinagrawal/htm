@@ -1,5 +1,6 @@
 from itertools import chain
 import copy
+import math
 import random
 from typing import (
     Any,
@@ -1100,22 +1101,39 @@ class OutputField(InputField):
         if not search_values:
             return {"value": None, "confidence": 0.0, "probabilities": probabilities}
 
+        n = len(probabilities)
+        mean_p = sum(probabilities) / n
+
         best_value: Any | None = None
-        best_score = -1.0
+        best_score = -float('inf')
+        best_encoding = None
 
         for candidate in search_values:
             encoding = self.encoder._encoding_cache.get(candidate)
             if encoding is None:
                 encoding = self.encoder.register_encoding(candidate)
-            score = sum(p for p, bit in zip(probabilities, encoding) if bit == 1)
+            # Score using mean-centered probabilities correlated with
+            # mean-centered encoding. This isolates the signal from the
+            # uniform baseline when probabilities are tightly distributed.
+            mean_e = sum(encoding) / n
+            score = sum(
+                (p - mean_p) * (b - mean_e)
+                for p, b in zip(probabilities, encoding)
+            )
             if score > best_score:
                 best_score = score
                 best_value = candidate
+                best_encoding = encoding
 
-        active_bits = getattr(self.encoder, "_active_bits", None)
-        if active_bits is None or active_bits == 0:
-            active_bits = max(1, sum(1 for p in probabilities if p > 0.5))
-        confidence = best_score / active_bits
+        # Confidence: Pearson correlation between probabilities and the best
+        # candidate's encoding. Measures how well the pattern of deviations
+        # in probabilities aligns with the candidate's activation pattern,
+        # independent of the baseline probability level.
+        mean_e = sum(best_encoding) / n
+        var_p = sum((p - mean_p) ** 2 for p in probabilities)
+        var_e = sum((b - mean_e) ** 2 for b in best_encoding)
+        denom = math.sqrt(var_p * var_e)
+        confidence = best_score / denom if denom > 0 else 0.0
 
         return {
             "value": best_value,
