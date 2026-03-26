@@ -87,6 +87,10 @@ def setup_key_bindings(plotter, app):
     plotter.add_key_event("7", lambda: app.toggle_segment_state_color("learning"))
     plotter.add_key_event("8", lambda: app.toggle_segment_state_color("matching"))
 
+    # Go/NoGo cell state toggles (number keys 9-0)
+    plotter.add_key_event("9", lambda: app.toggle_state_color("go_depolarized"))
+    plotter.add_key_event("0", lambda: app.toggle_state_color("nogo_depolarized"))
+
     # Setup field visibility toggles using first available letter from field name
     _setup_field_key_bindings(plotter, app)
 

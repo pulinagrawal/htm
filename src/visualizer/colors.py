@@ -10,6 +10,8 @@ COLORS = {
     "bursting":    (255, 50, 0),
     "winner":      (255, 255, 0),
     "correct_prediction": (0, 255, 255),
+    "go_depolarized": (0, 180, 255),      # Blue - motivated/approach
+    "nogo_depolarized": (255, 100, 50),    # Orange-red - inhibited/avoid
     "learning":    (255, 128, 0),
 }
 
@@ -80,8 +82,17 @@ def color_to_float(color: tuple) -> tuple:
     return (color[0] / 255, color[1] / 255, color[2] / 255)
 
 
+# Apical segment state colors
+APICAL_SEGMENT_COLORS = {
+    "inactive":  (60, 60, 60),
+    "go_active":    (0, 180, 255),    # Blue - Go segment active
+    "nogo_active":  (255, 100, 50),   # Orange - NoGo segment active
+    "learning":  (255, 180, 0),
+}
+
 # All toggleable cell state names
-CELL_STATES = ["active", "predictive", "bursting", "winner", "correct_prediction"]
+CELL_STATES = ["active", "predictive", "bursting", "winner", "correct_prediction",
+               "go_depolarized", "nogo_depolarized"]
 
 # All toggleable segment state names
 SEGMENT_STATES = ["active", "learning", "matching"]
@@ -90,21 +101,25 @@ SEGMENT_STATES = ["active", "learning", "matching"]
 def state_color(cell, column=None, hidden_states: set | None = None) -> tuple:
     """Determine cell color based on its current state. Returns 0-255 RGB.
 
-    Priority: correct_prediction > bursting > predictive > winner > active > inactive
-    
+    Priority: correct_prediction > bursting > predictive > go/nogo > winner > active > inactive
+
     Args:
         cell: The cell object to get color for.
         column: The column containing the cell (optional, needed for bursting check).
         hidden_states: Set of state names whose coloring should be disabled.
     """
     hidden = hidden_states or set()
-    
+
     if column and column.bursting and cell.active and "bursting" not in hidden:
         return COLORS["bursting"]
     if cell.predictive and cell.prev_predictive and cell.active and "correct_prediction" not in hidden:
         return COLORS["correct_prediction"]
     if cell.predictive and "predictive" not in hidden:
         return COLORS["predictive"]
+    if hasattr(cell, 'go_depolarized') and cell.go_depolarized and "go_depolarized" not in hidden:
+        return COLORS["go_depolarized"]
+    if hasattr(cell, 'nogo_depolarized') and cell.nogo_depolarized and "nogo_depolarized" not in hidden:
+        return COLORS["nogo_depolarized"]
     if cell.winner and "winner" not in hidden:
         return COLORS["winner"]
     if cell.active and "active" not in hidden:
@@ -114,13 +129,13 @@ def state_color(cell, column=None, hidden_states: set | None = None) -> tuple:
 
 def segment_color(segment, hidden_states: set | None = None) -> tuple:
     """Determine segment color based on state.
-    
+
     Args:
         segment: The segment object to get color for.
         hidden_states: Set of segment state names whose coloring should be disabled.
     """
     hidden = hidden_states or set()
-    
+
     if segment.learning and "learning" not in hidden:
         return SEGMENT_COLORS["learning"]
     if segment.active and "active" not in hidden:
@@ -128,3 +143,15 @@ def segment_color(segment, hidden_states: set | None = None) -> tuple:
     if segment.matching and "matching" not in hidden:
         return SEGMENT_COLORS["matching"]
     return SEGMENT_COLORS["inactive"]
+
+
+def apical_segment_color(segment) -> tuple:
+    """Determine apical segment color based on sign and state."""
+    if segment.learning:
+        return APICAL_SEGMENT_COLORS["learning"]
+    if segment.active:
+        if segment.sign > 0:
+            return APICAL_SEGMENT_COLORS["go_active"]
+        else:
+            return APICAL_SEGMENT_COLORS["nogo_active"]
+    return APICAL_SEGMENT_COLORS["inactive"]

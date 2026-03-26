@@ -11,7 +11,7 @@ from .controls import PlaybackController, setup_key_bindings
 from .history import History, HTMSnapshot
 from .colors import (
     color_to_float, TEXT_COLOR, TITLE_COLOR, BG_COLOR,
-    COLORS, SEGMENT_COLORS,
+    COLORS, SEGMENT_COLORS, APICAL_SEGMENT_COLORS,
 )
 
 
@@ -34,9 +34,12 @@ class HTMVisualizer:
     """
 
     def __init__(self, brain, input_sequence: Iterable[dict[str, Any]] | None = None,
-                 step_fn: Callable | None = None, title: str = "HTM Visualizer"):
+                 step_fn: Callable | None = None,
+                 agent_step_fn: Callable[[int], dict[str, Any]] | None = None,
+                 title: str = "HTM Visualizer"):
         self.brain = brain
         self.step_fn = step_fn
+        self.agent_step_fn = agent_step_fn
         self.title = title
 
         # Support both lists and generators/iterables via unified iterator + cache
@@ -137,19 +140,32 @@ class HTMVisualizer:
         return self._input_cache[index % len(self._input_cache)]
 
     def _do_step(self):
-        if self.step_fn:
+        if self.agent_step_fn:
+            # Agent callback handles the full brain+env loop (including brain.step)
+            inputs = self.agent_step_fn(self.timestep)
+            if inputs is None:
+                return
+            try:
+                predictions = self.brain.prediction()
+            except Exception:
+                predictions = {}
+        elif self.step_fn:
             inputs = self.step_fn(self.timestep)
+            try:
+                predictions = self.brain.prediction()
+            except Exception:
+                predictions = {}
+            self.brain.step(inputs, learn=self.learn)
         else:
             inputs = self._get_input_at(self.timestep)
             if inputs is None:
                 return
+            try:
+                predictions = self.brain.prediction()
+            except Exception:
+                predictions = {}
+            self.brain.step(inputs, learn=self.learn)
 
-        try:
-            predictions = self.brain.prediction()
-        except Exception:
-            predictions = {}
-
-        self.brain.step(inputs, learn=self.learn)
         self.timestep += 1
         self._track_metrics(inputs, predictions)
         self._capture_snapshot(inputs, predictions)
@@ -263,7 +279,7 @@ class HTMVisualizer:
             if sel["type"] == "cell":
                 if sel["field"] == info["field"] and sel["col"] == info["col"] and sel["cell"] == info["cell"]:
                     return sel
-            elif sel["type"] == "segment":
+            elif sel["type"] in ("segment", "apical_segment"):
                 if sel["field"] == info["field"] and sel["col"] == info["col"] and sel["cell"] == info["cell"] and sel["seg"] == info["seg"]:
                     return sel
             elif sel["type"] == "input_cell":
@@ -544,6 +560,23 @@ class HTMVisualizer:
                 lines.append(f"  Segments:    {n_seg}")
                 lines.append(f"  Synapses:    {n_syn}")
 
+        # ValueField TD learning stats
+        if snap and snap.td_avg_error:
+            lines.append("")
+            for name in snap.td_avg_error:
+                lines.append(f"[{name} TD]")
+                lines.append(f"  Avg Error: {snap.td_avg_error[name]:.4f}")
+                lines.append(f"  Avg Value: {snap.td_avg_value.get(name, 0.0):.4f}")
+
+        # Apical segment counts
+        if snap and snap.num_go_segments:
+            for name in snap.num_go_segments:
+                go_count = snap.num_go_segments.get(name, 0)
+                nogo_count = snap.num_nogo_segments.get(name, 0)
+                if go_count or nogo_count:
+                    lines.append(f"  Go Segs:     {go_count}")
+                    lines.append(f"  NoGo Segs:   {nogo_count}")
+
         if self.burst_history:
             recent = self.burst_history[-20:]
             lines.append(f"\nBurst Avg(20): {sum(recent)/len(recent):.1f}")
@@ -569,6 +602,8 @@ class HTMVisualizer:
         lines.append(f"  [3] Bursting:    {'ON' if 'bursting' not in hidden_states else 'OFF'}")
         lines.append(f"  [4] Winner:      {'ON' if 'winner' not in hidden_states else 'OFF'}")
         lines.append(f"  [5] Correct Pred:{'ON' if 'correct_prediction' not in hidden_states else 'OFF'}")
+        lines.append(f"  [9] Go Depol:    {'ON' if 'go_depolarized' not in hidden_states else 'OFF'}")
+        lines.append(f"  [0] NoGo Depol:  {'ON' if 'nogo_depolarized' not in hidden_states else 'OFF'}")
         lines.append("\n Segment State Colors:")
         lines.append(f"  [6] Active:      {'ON' if 'active' not in hidden_segment_states else 'OFF'}")
         lines.append(f"  [7] Learning:    {'ON' if 'learning' not in hidden_segment_states else 'OFF'}")
@@ -704,6 +739,8 @@ class HTMVisualizer:
             ("Bursting", color_to_float(COLORS["bursting"])),
             ("Winner", color_to_float(COLORS["winner"])),
             ("Correct Pred", color_to_float(COLORS["correct_prediction"])),
+            ("Go Depol", color_to_float(COLORS["go_depolarized"])),
+            ("NoGo Depol", color_to_float(COLORS["nogo_depolarized"])),
             ("Inactive", color_to_float(COLORS["inactive"])),
         ]
 
@@ -714,7 +751,13 @@ class HTMVisualizer:
             ("Seg Inactive", color_to_float(SEGMENT_COLORS["inactive"])),
         ]
 
-        all_entries = cell_entries + segment_entries
+        apical_entries = [
+            ("Go Seg Active", color_to_float(APICAL_SEGMENT_COLORS["go_active"])),
+            ("NoGo Seg Active", color_to_float(APICAL_SEGMENT_COLORS["nogo_active"])),
+            ("Apical Learning", color_to_float(APICAL_SEGMENT_COLORS["learning"])),
+        ]
+
+        all_entries = cell_entries + segment_entries + apical_entries
 
         legend_actor = self.plotter.add_legend(
             labels=all_entries,

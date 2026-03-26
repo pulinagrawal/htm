@@ -23,6 +23,18 @@ class HTMSnapshot:
     column_bursting: dict[str, list[int]] = field(default_factory=dict)
     column_active_cols: dict[str, list[int]] = field(default_factory=dict)
 
+    # Go/NoGo depolarization: (col_idx, cell_idx) tuples
+    column_go_cells: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+    column_nogo_cells: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+
+    # Apical segment counts
+    num_go_segments: dict[str, int] = field(default_factory=dict)
+    num_nogo_segments: dict[str, int] = field(default_factory=dict)
+
+    # ValueField TD state
+    td_avg_error: dict[str, float] = field(default_factory=dict)
+    td_avg_value: dict[str, float] = field(default_factory=dict)
+
     # Stats
     num_segments: dict[str, int] = field(default_factory=dict)
     num_synapses: dict[str, int] = field(default_factory=dict)
@@ -63,13 +75,42 @@ class History:
             snap.column_active_cols[name] = [
                 ci for ci, col in enumerate(f.columns) if col.active
             ]
+
+            # Go/NoGo depolarization states
+            snap.column_go_cells[name] = [
+                (ci, ji) for ci, col in enumerate(f.columns)
+                for ji, cell in enumerate(col.cells)
+                if hasattr(cell, 'go_depolarized') and cell.go_depolarized
+            ]
+            snap.column_nogo_cells[name] = [
+                (ci, ji) for ci, col in enumerate(f.columns)
+                for ji, cell in enumerate(col.cells)
+                if hasattr(cell, 'nogo_depolarized') and cell.nogo_depolarized
+            ]
+
+            # Apical segment counts
+            snap.num_go_segments[name] = sum(
+                len(cell.go_segments) for col in f.columns for cell in col.cells
+                if hasattr(cell, 'go_segments')
+            )
+            snap.num_nogo_segments[name] = sum(
+                len(cell.nogo_segments) for col in f.columns for cell in col.cells
+                if hasattr(cell, 'nogo_segments')
+            )
+
             snap.num_segments[name] = sum(
-                len(cell.segments) for col in f.columns for cell in col.cells
+                len(cell.distal_segments) for col in f.columns for cell in col.cells
             )
             snap.num_synapses[name] = sum(
                 len(seg.synapses) for col in f.columns
-                for cell in col.cells for seg in cell.segments
+                for cell in col.cells for seg in cell.distal_segments
             )
+
+        # ValueField TD state
+        if hasattr(brain, '_value_fields'):
+            for name, vf in brain._value_fields.items():
+                snap.td_avg_error[name] = vf.avg_error
+                snap.td_avg_value[name] = vf.avg_value()
 
         # Trim future if we stepped back then captured new
         if self._position < len(self._buffer) - 1:

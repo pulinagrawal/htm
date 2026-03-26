@@ -10,9 +10,9 @@ import numpy as np
 import pyvista as pv
 
 from .colors import (
-    COLORS, INPUT_FIELD_COLORS, SEGMENT_COLORS,
-    color_to_float, state_color, segment_color, permanence_color,
-    LABEL_COLOR,
+    COLORS, INPUT_FIELD_COLORS, SEGMENT_COLORS, APICAL_SEGMENT_COLORS,
+    color_to_float, state_color, segment_color, apical_segment_color,
+    permanence_color, LABEL_COLOR,
 )
 
 # Note: Incoming synapses = synapses feeding INTO a selected segment from source cells
@@ -281,6 +281,8 @@ class BrainRenderer:
             self._add_empty_mesh(plotter, f"cells_{name}")
             self._add_empty_mesh(plotter, f"segments_{name}")
             self._add_empty_mesh(plotter, f"synapses_{name}")
+            self._add_empty_mesh(plotter, f"apical_segments_{name}")
+            self._add_empty_mesh(plotter, f"apical_synapses_{name}")
             if field.columns:
                 all_z = [layout.cell_positions[(ci, ji)][2]
                          for ci in range(len(field.columns))
@@ -339,31 +341,61 @@ class BrainRenderer:
         syn_starts = []
         syn_ends = []
         syn_colors = []
+        # Apical segments rendered separately with distinct actor names
+        apical_seg_positions = []
+        apical_seg_colors = []
+        apical_syn_starts = []
+        apical_syn_ends = []
+        apical_syn_colors = []
 
         for ci, col in enumerate(field.columns):
             for ji, cell in enumerate(col.cells):
-                if not cell.segments:
-                    continue
                 # Skip inactive cells' segments if hide_inactive is enabled
                 if self.hide_inactive:
                     is_active = cell.active or cell.predictive or cell.winner or col.bursting
+                    if hasattr(cell, 'go_depolarized'):
+                        is_active = is_active or cell.go_depolarized or cell.nogo_depolarized
                     if not is_active:
                         continue
-                cell_pos = layout.cell_positions[(ci, ji)]
-                n_segs = len(cell.segments)
-                for si, seg in enumerate(cell.segments):
-                    offset = _segment_offset_direction(si, n_segs)
-                    seg_pos = cell_pos + offset
-                    seg_positions.append(seg_pos)
-                    seg_colors.append(segment_color(seg, self.hidden_segment_states))
 
-                    if self.show_synapses:
-                        for syn in seg.synapses:
-                            src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
-                            if src_pos is not None:
-                                syn_starts.append(seg_pos)
-                                syn_ends.append(src_pos)
-                                syn_colors.append(permanence_color(syn.permanence))
+                cell_pos = layout.cell_positions[(ci, ji)]
+
+                # Distal segments
+                if cell.distal_segments:
+                    n_segs = len(cell.distal_segments)
+                    for si, seg in enumerate(cell.distal_segments):
+                        offset = _segment_offset_direction(si, n_segs)
+                        seg_pos = cell_pos + offset
+                        seg_positions.append(seg_pos)
+                        seg_colors.append(segment_color(seg, self.hidden_segment_states))
+
+                        if self.show_synapses:
+                            for syn in seg.synapses:
+                                src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
+                                if src_pos is not None:
+                                    syn_starts.append(seg_pos)
+                                    syn_ends.append(src_pos)
+                                    syn_colors.append(permanence_color(syn.permanence))
+
+                # Apical segments (Go + NoGo)
+                apical_segs = getattr(cell, 'apical_segments', [])
+                if apical_segs:
+                    n_apical = len(apical_segs)
+                    for ai, aseg in enumerate(apical_segs):
+                        # Offset apical segments on the opposite side (negative direction)
+                        offset = _segment_offset_direction(ai, n_apical)
+                        offset = -offset  # opposite side from distal
+                        aseg_pos = cell_pos + offset * 1.5  # slightly further out
+                        apical_seg_positions.append(aseg_pos)
+                        apical_seg_colors.append(apical_segment_color(aseg))
+
+                        if self.show_synapses:
+                            for syn in aseg.synapses:
+                                src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
+                                if src_pos is not None:
+                                    apical_syn_starts.append(aseg_pos)
+                                    apical_syn_ends.append(src_pos)
+                                    apical_syn_colors.append(permanence_color(syn.permanence))
 
         if seg_positions:
             self._add_cube_glyph(
@@ -372,7 +404,6 @@ class BrainRenderer:
                 SEGMENT_RADIUS, f"segments_{name}",
             )
         else:
-            # Clear old segments actor
             self._add_empty_mesh(plotter, f"segments_{name}")
 
         if syn_starts:
@@ -382,6 +413,24 @@ class BrainRenderer:
             )
         else:
             self._add_empty_mesh(plotter, f"synapses_{name}")
+
+        # Apical segments and synapses
+        if apical_seg_positions:
+            self._add_cube_glyph(
+                plotter, np.array(apical_seg_positions),
+                np.array(apical_seg_colors, dtype=np.uint8),
+                SEGMENT_RADIUS * 0.8, f"apical_segments_{name}",
+            )
+        else:
+            self._add_empty_mesh(plotter, f"apical_segments_{name}")
+
+        if apical_syn_starts:
+            self._draw_lines(
+                plotter, np.array(apical_syn_starts), np.array(apical_syn_ends),
+                np.array(apical_syn_colors, dtype=np.uint8), f"apical_synapses_{name}",
+            )
+        else:
+            self._add_empty_mesh(plotter, f"apical_synapses_{name}")
 
     # ------------------------------------------------------------------
     # Update methods
@@ -431,6 +480,8 @@ class BrainRenderer:
                 self._add_empty_mesh(plotter, f"cells_{name}")
                 self._add_empty_mesh(plotter, f"segments_{name}")
                 self._add_empty_mesh(plotter, f"synapses_{name}")
+                self._add_empty_mesh(plotter, f"apical_segments_{name}")
+                self._add_empty_mesh(plotter, f"apical_synapses_{name}")
                 continue
             self._render_cells(plotter, name, field, layout)
             self._render_segments_and_synapses(plotter, name, field, layout)
@@ -488,6 +539,8 @@ class BrainRenderer:
             winner_set = set(snapshot.column_winner_cells.get(name, []))
             pred_set = set(snapshot.column_predictive_cells.get(name, []))
             burst_set = set(snapshot.column_bursting.get(name, []))
+            go_set = set(snapshot.column_go_cells.get(name, []))
+            nogo_set = set(snapshot.column_nogo_cells.get(name, []))
 
             positions = []
             colors = []
@@ -496,8 +549,9 @@ class BrainRenderer:
                     key = (ci, ji)
                     # Check if cell is active in any state
                     is_active = (
-                        key in active_set or key in pred_set or 
-                        key in winner_set or ci in burst_set
+                        key in active_set or key in pred_set or
+                        key in winner_set or ci in burst_set or
+                        key in go_set or key in nogo_set
                     )
                     # Skip inactive cells if hide_inactive is enabled
                     if self.hide_inactive and not is_active:
@@ -510,6 +564,10 @@ class BrainRenderer:
                         color = COLORS["correct_prediction"]
                     elif key in pred_set and "predictive" not in self.hidden_states:
                         color = COLORS["predictive"]
+                    elif key in go_set and "go_depolarized" not in self.hidden_states:
+                        color = COLORS["go_depolarized"]
+                    elif key in nogo_set and "nogo_depolarized" not in self.hidden_states:
+                        color = COLORS["nogo_depolarized"]
                     elif key in winner_set and "winner" not in self.hidden_states:
                         color = COLORS["winner"]
                     elif key in active_set and "active" not in self.hidden_states:
@@ -581,37 +639,58 @@ class BrainRenderer:
         syn_ends = []
         syn_colors = []
 
-        # Walk all segments to find connections involving selected cells
+        # Walk all segments (distal + apical) to find connections involving selected cells
         for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             for ci, col in enumerate(field.columns):
                 for ji, cell in enumerate(col.cells):
                     cell_pos = layout.cell_positions[(ci, ji)]
-                    n_segs = len(cell.segments)
-                    for si, seg in enumerate(cell.segments):
+                    cell_is_selected = id(cell) in selected_cell_ids
+
+                    # Distal segments
+                    n_segs = len(cell.distal_segments)
+                    for si, seg in enumerate(cell.distal_segments):
                         offset = _segment_offset_direction(si, n_segs)
                         seg_pos = cell_pos + offset
-
-                        cell_is_selected = id(cell) in selected_cell_ids
                         seg_is_selected = id(seg) in selected_seg_positions
 
                         for syn in seg.synapses:
                             src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
                             if src_pos is None:
                                 continue
-
                             source_is_selected = id(syn.source_cell) in selected_cell_ids
                             syn_color = permanence_color(syn.permanence)
 
                             if (cell_is_selected or seg_is_selected) and self.show_incoming_synapses:
-                                # Incoming: synapses feeding INTO this segment from source cells
+                                syn_starts.append(seg_pos)
+                                syn_ends.append(src_pos)
+                                syn_colors.append(syn_color)
+                            elif source_is_selected and self.show_outgoing_synapses:
                                 syn_starts.append(seg_pos)
                                 syn_ends.append(src_pos)
                                 syn_colors.append(syn_color)
 
+                    # Apical segments
+                    apical_segs = getattr(cell, 'apical_segments', [])
+                    n_apical = len(apical_segs)
+                    for ai, aseg in enumerate(apical_segs):
+                        offset = -_segment_offset_direction(ai, n_apical) * 1.5
+                        aseg_pos = cell_pos + offset
+                        seg_is_selected = id(aseg) in selected_seg_positions
+
+                        for syn in aseg.synapses:
+                            src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
+                            if src_pos is None:
+                                continue
+                            source_is_selected = id(syn.source_cell) in selected_cell_ids
+                            syn_color = permanence_color(syn.permanence)
+
+                            if (cell_is_selected or seg_is_selected) and self.show_incoming_synapses:
+                                syn_starts.append(aseg_pos)
+                                syn_ends.append(src_pos)
+                                syn_colors.append(syn_color)
                             elif source_is_selected and self.show_outgoing_synapses:
-                                # Outgoing: selected cell is SOURCE, feeding into other segments
-                                syn_starts.append(seg_pos)
+                                syn_starts.append(aseg_pos)
                                 syn_ends.append(src_pos)
                                 syn_colors.append(syn_color)
 
@@ -681,8 +760,8 @@ class BrainRenderer:
                         "active": cell.active, "predictive": cell.predictive,
                         "winner": cell.winner,
                     })
-                    n_segs = len(cell.segments)
-                    for si, seg in enumerate(cell.segments):
+                    n_segs = len(cell.distal_segments)
+                    for si, seg in enumerate(cell.distal_segments):
                         offset = _segment_offset_direction(si, n_segs)
                         seg_pos = cell_pos + offset
                         dist, depth = self._point_ray_metrics(seg_pos, ray_origin, ray_dir)
@@ -693,6 +772,23 @@ class BrainRenderer:
                             "synapses": len(seg.synapses),
                             "active": seg.active, "learning": seg.learning,
                             "matching": seg.matching,
+                        })
+
+                    # Apical segments
+                    apical_segs = getattr(cell, 'apical_segments', [])
+                    n_apical = len(apical_segs)
+                    for ai, aseg in enumerate(apical_segs):
+                        offset = -_segment_offset_direction(ai, n_apical) * 1.5
+                        aseg_pos = cell_pos + offset
+                        dist, depth = self._point_ray_metrics(aseg_pos, ray_origin, ray_dir)
+                        _consider(dist, depth, {
+                            "type": "apical_segment", "field": name,
+                            "col": ci, "cell": ji, "seg": ai,
+                            "obj": aseg, "pos": aseg_pos,
+                            "synapses": len(aseg.synapses),
+                            "active": aseg.active, "learning": aseg.learning,
+                            "sign": aseg.sign,
+                            "score": aseg.score(),
                         })
 
         for name, field in self.brain.all_input_fields.items():
