@@ -9,6 +9,7 @@ from .brain_renderer import BrainRenderer
 from .connection_renderer import ConnectionRenderer
 from .controls import PlaybackController, setup_key_bindings
 from .history import History, HTMSnapshot
+from .mode_manager import Mode, ModeManager, MODE_COLORS, MODE_LABELS
 from .colors import (
     color_to_float, TEXT_COLOR, TITLE_COLOR, BG_COLOR,
     COLORS, SEGMENT_COLORS, APICAL_SEGMENT_COLORS,
@@ -19,19 +20,13 @@ from .colors import (
 class HTMVisualizer:
     """Interactive 3D HTM Brain visualizer using PyVista.
 
-    Controls:
-        SPACE       Play/Pause auto-stepping
-        RIGHT       Step forward
-        LEFT        Step back in history
-        S           Toggle synapse line visibility
-        P           Toggle proximal connection visibility (all columns)
-        X           Toggle proximal synapses for selected column
-        O           Toggle outgoing distal synapses (cell → other segments)
-        I           Toggle incoming distal synapses (segment ← source cells)
-        R           Reset camera
-        Click       Select element (cell / segment / input cell)
-        Shift+Click Add element to multi-selection
-        ESC         Clear selection
+    Modal keyboard system with four modes:
+        NORMAL (default)  Camera, field toggles, UI controls
+        SYNAPSE (V)       Synapse/connection visibility
+        SELECT  (M)       Click picking, multi-select, history
+        COLOR   (C)       Cell + segment state color toggles
+
+    Press H for mode-aware shortcuts. ESC returns to NORMAL.
     """
 
     def __init__(self, brain, input_sequence: Iterable[dict[str, Any]] | None = None,
@@ -73,6 +68,10 @@ class HTMVisualizer:
         self.burst_history: list[int] = []
         self.error_history: list[float] = []
 
+        # Modal keyboard system
+        self.mode_manager = ModeManager()
+        self.mode_manager.on_mode_change = self._on_mode_change
+
         # Renderers
         self.brain_renderer = BrainRenderer(brain)
         self.conn_renderer = ConnectionRenderer(self.brain_renderer)
@@ -103,7 +102,7 @@ class HTMVisualizer:
             update_callback=self._update_display,
         )
         self.playback.step_back = self._step_back_history
-        setup_key_bindings(self.plotter, self)
+        setup_key_bindings(self.plotter, self, self.mode_manager)
 
         # Selection via left-click: use iren click observer for ray-based picking
         self.plotter.iren.track_click_position(
@@ -238,6 +237,9 @@ class HTMVisualizer:
         """Handle left-click via ray-based picking for accurate selection."""
         if click_pos is None:
             return
+        # Only pick in SELECT mode
+        if self.mode_manager.current_mode != Mode.SELECT:
+            return
 
         # Build a ray from camera through the clicked world position
         cam_pos = np.array(self.plotter.camera.position)
@@ -330,7 +332,7 @@ class HTMVisualizer:
 
     def _update_selection_overlay(self):
         if not self._selections:
-            text = "Click to select | Shift+Click: multi-select"
+            text = "M for Select mode | Click to pick | Shift+Click: multi"
         elif len(self._selections) == 1:
             text = self._format_selection(self._selections[0])
         else:
@@ -463,6 +465,11 @@ class HTMVisualizer:
     # Public control methods (called by key bindings)
     # ------------------------------------------------------------------
 
+    def handle_escape(self):
+        """ESC always exits to NORMAL, preserving selection."""
+        if self.mode_manager.current_mode != Mode.NORMAL:
+            self.mode_manager.exit_to_normal()
+
     def toggle_play(self):
         self.playback.toggle_play(self.plotter)
 
@@ -510,6 +517,14 @@ class HTMVisualizer:
         self.brain_renderer.show_incoming_synapses = not self.brain_renderer.show_incoming_synapses
         self._update_display()
 
+    def toggle_go_apical(self):
+        self.brain_renderer.show_go_apical = not self.brain_renderer.show_go_apical
+        self._update_display()
+
+    def toggle_nogo_apical(self):
+        self.brain_renderer.show_nogo_apical = not self.brain_renderer.show_nogo_apical
+        self._update_display()
+
     def toggle_inactive(self):
         self.brain_renderer.hide_inactive = not self.brain_renderer.hide_inactive
         self._update_display()
@@ -521,13 +536,6 @@ class HTMVisualizer:
         else:
             self.brain_renderer.hidden_states.add(state_name)
         self._update_display()
-        # Disable VTK stereo mode (triggered by default '3' key binding)
-        # Use a one-shot timer to run AFTER VTK's default handler
-        def disable_stereo(*args):
-            self.plotter.iren.interactor.GetRenderWindow().SetStereoRender(False)
-            self.plotter.render()
-        self.plotter.iren.interactor.CreateOneShotTimer(1)
-        self.plotter.iren.interactor.AddObserver('TimerEvent', disable_stereo)
 
     def toggle_segment_state_color(self, state_name: str):
         """Toggle visibility of a specific segment state color."""
@@ -583,15 +591,76 @@ class HTMVisualizer:
             color=color_to_float(TITLE_COLOR), name="title",
         )
 
+    # Mode entries shown in the top hint bar: (key, label, Mode)
+    _MODE_HINTS = [
+        ("V", "Synapse", Mode.SYNAPSE),
+        ("M", "Select",  Mode.SELECT),
+        ("C", "Color",   Mode.COLOR),
+    ]
+
     def _add_controls_text(self):
-        # Show minimal hint at top right
+        # Dim base hint (always visible)
         self.plotter.add_text(
-            "L for Legend                               | " \
-            "                              H for Shortcuts",
-            position="upper_right", font_size=9,
-            color=(0.5, 0.5, 0.5), name="controls_hint",
+            "", position="upper_edge", font_size=9,
+            color=(0.5, 0.5, 0.5), name="controls_hint", font="courier",
+        )
+        # Colored highlight overlay for the active mode
+        self.plotter.add_text(
+            "", position="upper_edge", font_size=9,
+            color=(1.0, 1.0, 1.0), name="mode_highlight", font="courier",
         )
         self._shortcuts_actors = []
+        self._update_controls_hint()
+
+    def _update_controls_hint(self):
+        """Rebuild the top hint bar, highlighting the active mode."""
+        mode = self.mode_manager.current_mode
+        dim = (0.5, 0.5, 0.5)
+
+        parts = []
+        highlight_text_parts = []
+        for key, label, m in self._MODE_HINTS:
+            entry = f"{key} {label}"
+            parts.append(entry)
+            if m == mode:
+                highlight_text_parts.append(entry)
+            else:
+                # Invisible spacer of same width to keep alignment
+                highlight_text_parts.append(" " * len(entry))
+
+        suffix = "   H Shortcuts"
+        base_text = "  ".join(parts) + suffix
+        highlight_text = "  ".join(highlight_text_parts) + " " * len(suffix)
+
+        if mode == Mode.NORMAL:
+            # No mode active -- show all dim, no highlight
+            self.plotter.add_text(
+                base_text, position="upper_edge", font_size=9,
+                color=dim, name="controls_hint", font="courier",
+            )
+            self.plotter.add_text(
+                "", position="upper_edge", font_size=9,
+                color=dim, name="mode_highlight", font="courier",
+            )
+        else:
+            color = MODE_COLORS[mode]
+            self.plotter.add_text(
+                base_text, position="upper_edge", font_size=9,
+                color=dim, name="controls_hint", font="courier",
+            )
+            self.plotter.add_text(
+                highlight_text, position="upper_edge", font_size=9,
+                color=color, name="mode_highlight", font="courier",
+            )
+
+    def _on_mode_change(self, mode: Mode):
+        """Called when the mode changes -- update hint bar and shortcuts."""
+        if self.plotter is None:
+            return
+        self._update_controls_hint()
+        if self._show_shortcuts:
+            self._update_shortcuts()
+        self.plotter.render()
 
     def _add_stats_overlay(self):
         self.plotter.add_text(
@@ -665,53 +734,39 @@ class HTMVisualizer:
             lines.append(f"Error Avg(20): {sum(recent)/len(recent):.4f}")
 
         lines.append(f"\nHistory: {self.history._position + 1}/{len(self.history)}")
-        lines.append(f"Synapses: {'ON' if self.brain_renderer.show_synapses else 'OFF'}")
-        lines.append(f"Proximal (all): {'ON' if self.show_proximal else 'OFF'}")
-        lines.append(f"Prox Connected: {'ON' if self.conn_renderer.show_connected_proximal else 'OFF'}")
-        lines.append(f"Prox Potential: {'ON' if self.conn_renderer.show_potential_proximal else 'OFF'}")
-        lines.append(f"Outgoing (O): {'ON' if self.brain_renderer.show_outgoing_synapses else 'OFF'}")
-        lines.append(f"Incoming (I): {'ON' if self.brain_renderer.show_incoming_synapses else 'OFF'}")
-        lines.append(f"Hide Inactive: {'ON' if self.brain_renderer.hide_inactive else 'OFF'}")
 
-        # Cell state color visibility
-        hidden_states = self.brain_renderer.hidden_states
-        hidden_segment_states = self.brain_renderer.hidden_segment_states
-        lines.append("\nCell State Colors:")
-        lines.append(f"  [1] Active:      {'ON' if 'active' not in hidden_states else 'OFF'}")
-        lines.append(f"  [2] Predictive:  {'ON' if 'predictive' not in hidden_states else 'OFF'}")
-        lines.append(f"  [3] Bursting:    {'ON' if 'bursting' not in hidden_states else 'OFF'}")
-        lines.append(f"  [4] Winner:      {'ON' if 'winner' not in hidden_states else 'OFF'}")
-        lines.append(f"  [5] Correct Pred:{'ON' if 'correct_prediction' not in hidden_states else 'OFF'}")
-        lines.append(f"  [9] Go Depol:    {'ON' if 'go_depolarized' not in hidden_states else 'OFF'}")
-        lines.append(f"  [0] NoGo Depol:  {'ON' if 'nogo_depolarized' not in hidden_states else 'OFF'}")
-        lines.append("\n Segment State Colors:")
-        lines.append(f"  [6] Active:      {'ON' if 'active' not in hidden_segment_states else 'OFF'}")
-        lines.append(f"  [7] Learning:    {'ON' if 'learning' not in hidden_segment_states else 'OFF'}")
-        lines.append(f"  [8] Matching:    {'ON' if 'matching' not in hidden_segment_states else 'OFF'}")
-        # Field visibility status with letter shortcuts
-        field_names = self.get_field_names()
-        if field_names:
-            # Build reverse mapping: field_name -> key
-            key_for_field = {v: k for k, v in self._field_keys.items()}
-            lines.append("\nFields:")
-            for name in field_names:
-                visible = "✓" if name not in self.hidden_fields else "✗"
-                key = key_for_field.get(name, "?")
-                # Highlight the shortcut letter in the field name
-                display_name = self._highlight_key_in_name(name, key)
-                lines.append(f"  [{key.upper()}] {display_name} [{visible}]")
+        # Compact synapse status
+        syn_flags = []
+        if self.brain_renderer.show_synapses:
+            syn_flags.append("Dist")
+        if self.show_proximal:
+            syn_flags.append("Prox")
+        if self.conn_renderer.show_connected_proximal:
+            syn_flags.append("Conn")
+        if self.conn_renderer.show_potential_proximal:
+            syn_flags.append("Pot")
+        if self.brain_renderer.show_outgoing_synapses:
+            syn_flags.append("Out")
+        if self.brain_renderer.show_incoming_synapses:
+            syn_flags.append("In")
+        if self.brain_renderer.show_go_apical:
+            syn_flags.append("Go")
+        if self.brain_renderer.show_nogo_apical:
+            syn_flags.append("NoGo")
+        lines.append(f"Synapses: {' '.join(syn_flags) if syn_flags else 'all OFF'}")
+        if self.brain_renderer.hide_inactive:
+            lines.append("Hide Inactive: ON")
+
+        # Compact hidden colors
+        hidden = self.brain_renderer.hidden_states | self.brain_renderer.hidden_segment_states
+        if hidden:
+            lines.append(f"Hidden colors: {', '.join(sorted(hidden))}")
+
+        # Field visibility
+        if self.hidden_fields:
+            lines.append(f"Hidden fields: {', '.join(sorted(self.hidden_fields))}")
 
         return "\n".join(lines)
-
-    def _highlight_key_in_name(self, name: str, key: str) -> str:
-        """Return the field name with the shortcut key highlighted."""
-        # Find where the key appears in the name (case-insensitive)
-        lower_name = name.lower()
-        idx = lower_name.find(key.lower())
-        if idx >= 0:
-            # Wrap that character in brackets to highlight it
-            return name[:idx] + "[" + name[idx] + "]" + name[idx+1:]
-        return name
 
     def _add_widgets(self):
         self._speed_slider = None
@@ -737,6 +792,94 @@ class HTMVisualizer:
             title_height=0.023,
         )
 
+    # Map internal key names to display labels for shortcuts HUD
+    _KEY_DISPLAY = {
+        "space": "SPACE", "Escape": "ESC",
+        "Left": "<- ->", "Right": None,  # Right is shown combined with Left
+        "bracketleft": "[", "bracketright": "]",
+    }
+
+    @staticmethod
+    def _display_key(key: str) -> str | None:
+        """Convert an internal key name to a display string, or None to skip."""
+        table = HTMVisualizer._KEY_DISPLAY
+        if key in table:
+            return table[key]
+        return key.upper() if len(key) == 1 else key
+
+    @staticmethod
+    def _highlight_mnemonic(key_display: str, desc: str) -> str:
+        """Wrap the first occurrence of the mnemonic letter in [] within desc."""
+        if len(key_display) != 1:
+            return desc
+        letter = key_display.upper()
+        for i, ch in enumerate(desc):
+            if ch.upper() == letter:
+                return desc[:i] + "[" + desc[i] + "]" + desc[i + 1:]
+        return desc
+
+    def _format_shortcut_block(
+        self, label: str, mode: Mode,
+        sections: dict[str, list[tuple[str, str]]],
+        global_bindings: list[tuple[str, str]],
+    ) -> str:
+        """Build a fixed-width text block for the shortcuts overlay.
+
+        Every line is padded to the same width so VTK's upper_right
+        positioning produces a clean rectangular block.
+        """
+        # First pass: collect all (display_key, desc) pairs to measure key_width
+        all_pairs: list[tuple[str, str]] = []
+
+        if mode == Mode.SELECT:
+            all_pairs.append(("Click", "Select"))
+            all_pairs.append(("Shift+Click", "Multi-select"))
+
+        for sec_name, bindings in sections.items():
+            for key, desc in bindings:
+                dk = self._display_key(key)
+                if dk is not None:
+                    all_pairs.append((dk, desc))
+
+        for key, desc in global_bindings:
+            dk = self._display_key(key)
+            if dk is not None:
+                all_pairs.append((dk, desc))
+
+        key_width = max((len(k) for k, _ in all_pairs), default=5)
+        key_width = max(key_width, 5)
+
+        def row(dk: str, desc: str) -> str:
+            highlighted = self._highlight_mnemonic(dk, desc)
+            return f"{dk:>{key_width}}  {highlighted}"
+
+        # Second pass: build lines with section headers
+        raw_lines: list[str] = ["", f"  [ {label} MODE ]"]
+
+        if mode == Mode.SELECT:
+            raw_lines.append(row("Click", "Select"))
+            raw_lines.append(row("Shift+Click", "Multi-select"))
+
+        for sec_name, bindings in sections.items():
+            if sec_name:
+                raw_lines.append("")
+                raw_lines.append(f"{sec_name:>{key_width + 2}}")
+            for key, desc in bindings:
+                dk = self._display_key(key)
+                if dk is not None:
+                    raw_lines.append(row(dk, desc))
+
+        # Global section
+        raw_lines.append("")
+        raw_lines.append(f"{'Global':>{key_width + 2}}")
+        for key, desc in global_bindings:
+            dk = self._display_key(key)
+            if dk is not None:
+                raw_lines.append(row(dk, desc))
+
+        width = max(len(line) for line in raw_lines)
+        return "\n".join(line.ljust(width) for line in raw_lines)
+
     def _update_shortcuts(self):
         # Remove existing shortcuts actors
         if hasattr(self, '_shortcuts_actors'):
@@ -750,42 +893,12 @@ class HTMVisualizer:
         if not self._show_shortcuts:
             return
 
-        # Build shortcuts text with fixed-width columns
-        shortcuts_text = (
-            "                           \n"
-            "                           \n"
-            "      SPACE  Play/Pause    \n"
-            "      <- ->  Step fwd/back \n"
-            "          S  Synapses      \n"
-            "          P  Proximal(all) \n"
-            "          X  Prox Connected\n"
-            "          Z  Prox Potential\n"
-            "          O  Outgoing(cell)\n"
-            "          I  Incoming(seg) \n"
-            "          A  Hide Inactive \n"
-            "          R  Reset camera  \n"
-            "          L  Legend        \n"
-            "          H  Shortcuts     \n"
-            "          T  Speed Slider  \n"
-            "      [  ]  Selectn hist  \n"
-            "      Click  Select        \n"
-            "Shift+Click  Multi-select  \n"
-            "        ESC  Clear select  \n"
-            "                          \n"
-            "─── Cell Colors Toggle  ──\n"
-            "          1  Active        \n"
-            "          2  Predictive    \n"
-            "          3  Bursting      \n"
-            "          4  Winner        \n"
-            "          5  Correct Pred  \n"
-            "          9  Go Depol      \n"
-            "          0  NoGo Depol    \n"
-            "                          \n"
-            "──── Segment Colors Toggle\n"
-            "          6  Active        \n"
-            "          7  Learning      \n"
-            "          8  Matching      "
-        )
+        mode = self.mode_manager.current_mode
+        label = MODE_LABELS[mode]
+        sections = self.mode_manager.get_bindings_by_section()
+        global_bindings = self.mode_manager.get_global_bindings_for_display()
+
+        shortcuts_text = self._format_shortcut_block(label, mode, sections, global_bindings)
 
         # Create text actor with monospace font
         actor = self.plotter.add_text(

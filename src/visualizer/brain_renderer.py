@@ -72,6 +72,8 @@ class BrainRenderer:
         self.show_synapses = True
         self.show_outgoing_synapses = True
         self.show_incoming_synapses = True
+        self.show_go_apical = True
+        self.show_nogo_apical = True
         self.hidden_fields: set[str] = set()
         self.hidden_states: set[str] = set()  # Cell states whose coloring is disabled
         self.hidden_segment_states: set[str] = set()  # Segment states whose coloring is disabled
@@ -382,6 +384,13 @@ class BrainRenderer:
                 if apical_segs:
                     n_apical = len(apical_segs)
                     for ai, aseg in enumerate(apical_segs):
+                        # Skip based on go/nogo visibility
+                        is_go = getattr(aseg, 'sign', 1) > 0
+                        if is_go and not self.show_go_apical:
+                            continue
+                        if not is_go and not self.show_nogo_apical:
+                            continue
+
                         # Offset apical segments on the opposite side (negative direction)
                         offset = _segment_offset_direction(ai, n_apical)
                         offset = -offset  # opposite side from distal

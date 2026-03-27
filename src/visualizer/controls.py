@@ -2,6 +2,8 @@
 
 from typing import Callable
 
+from .mode_manager import Mode, ModeManager
+
 
 class PlaybackController:
     """Manages playback state: play/pause, step, speed."""
@@ -36,7 +38,7 @@ class PlaybackController:
     def _start_timer(self, plotter):
         # Clean up any existing timer first
         self._stop_timer(plotter)
-        
+
         def on_timer(obj, event):
             if self.playing:
                 self.step_forward()
@@ -55,62 +57,81 @@ class PlaybackController:
             self._observer_id = None
 
 
-def setup_key_bindings(plotter, app):
-    """Configure keyboard shortcuts."""
-    plotter.add_key_event("space", lambda: app.toggle_play())
-    plotter.add_key_event("Right", lambda: app.step_forward())
-    plotter.add_key_event("Left", lambda: app.step_back())
-    plotter.add_key_event("r", lambda: app.reset_view())
-    plotter.add_key_event("p", lambda: app.toggle_proximal())
-    plotter.add_key_event("x", lambda: app.toggle_connected_proximal())
-    plotter.add_key_event("z", lambda: app.toggle_potential_proximal())
-    plotter.add_key_event("s", lambda: app.toggle_synapses())
-    plotter.add_key_event("o", lambda: app.toggle_outgoing_synapses())
-    plotter.add_key_event("i", lambda: app.toggle_incoming_synapses())
-    plotter.add_key_event("a", lambda: app.toggle_inactive())
-    plotter.add_key_event("l", lambda: app.toggle_legend())
-    plotter.add_key_event("h", lambda: app.toggle_shortcuts())
-    plotter.add_key_event("t", lambda: app.toggle_speed_slider())
-    plotter.add_key_event("Escape", lambda: app.clear_selection())
-    plotter.add_key_event("bracketleft", lambda: app.selection_back())
-    plotter.add_key_event("bracketright", lambda: app.selection_forward())
-
-    # Cell state color toggles (number keys 1-5)
-    plotter.add_key_event("1", lambda: app.toggle_state_color("active"))
-    plotter.add_key_event("2", lambda: app.toggle_state_color("predictive"))
-    plotter.add_key_event("3", lambda: app.toggle_state_color("bursting"))
-    plotter.add_key_event("4", lambda: app.toggle_state_color("winner"))
-    plotter.add_key_event("5", lambda: app.toggle_state_color("correct_prediction"))
-
-    # Segment state color toggles (number keys 6-8)
-    plotter.add_key_event("6", lambda: app.toggle_segment_state_color("active"))
-    plotter.add_key_event("7", lambda: app.toggle_segment_state_color("learning"))
-    plotter.add_key_event("8", lambda: app.toggle_segment_state_color("matching"))
-
-    # Go/NoGo cell state toggles (number keys 9-0)
-    plotter.add_key_event("9", lambda: app.toggle_state_color("go_depolarized"))
-    plotter.add_key_event("0", lambda: app.toggle_state_color("nogo_depolarized"))
-
-    # Setup field visibility toggles using first available letter from field name
-    _setup_field_key_bindings(plotter, app)
+# Keys reserved by PyVista internals (not available for any mode)
+_PYVISTA_RESERVED = {"q", "e", "f", "w", "3"}
 
 
-# Keys reserved by other shortcuts or PyVista
-RESERVED_KEYS = {
-    "r", "p", "s", "o", "i", "l", "h", "a", "x", "z", "t",  # Our shortcuts
-    "q", "e", "f", "v", "w", "c",            # Common PyVista keys
-    "3",                                       # PyVista stereo mode
-}
+def setup_key_bindings(plotter, app, mode_manager: ModeManager):
+    """Configure keyboard shortcuts via the modal ModeManager."""
+
+    # --- Global keys (work in all modes) ---
+    mode_manager.register_global("space", lambda: app.toggle_play(), "Play/Pause")
+    mode_manager.register_global("Right", lambda: app.step_forward(), "Step forward")
+    mode_manager.register_global("Left", lambda: app.step_back(), "Step back")
+    mode_manager.register_global("h", lambda: app.toggle_shortcuts(), "Shortcuts")
+    mode_manager.register_global("Escape", lambda: app.handle_escape(), "Back / Clear")
+
+    # --- NORMAL mode ---
+    mode_manager.register(Mode.NORMAL, "v", lambda: mode_manager.enter_mode(Mode.SYNAPSE), "Synapse mode")
+    mode_manager.register(Mode.NORMAL, "m", lambda: mode_manager.enter_mode(Mode.SELECT), "Select mode")
+    mode_manager.register(Mode.NORMAL, "c", lambda: mode_manager.enter_mode(Mode.COLOR), "Color mode")
+    mode_manager.register(Mode.NORMAL, "r", lambda: app.reset_view(), "Reset camera")
+    mode_manager.register(Mode.NORMAL, "a", lambda: app.toggle_inactive(), "Hide inactive")
+    mode_manager.register(Mode.NORMAL, "l", lambda: app.toggle_legend(), "Legend")
+    mode_manager.register(Mode.NORMAL, "t", lambda: app.toggle_speed_slider(), "Speed slider")
+
+    # --- SYNAPSE mode (mnemonic letters) ---
+    mode_manager.register(Mode.SYNAPSE, "d", lambda: app.toggle_synapses(), "Distal(all)")
+    mode_manager.register(Mode.SYNAPSE, "p", lambda: app.toggle_proximal(), "Proximal(all)")
+    mode_manager.register(Mode.SYNAPSE, "c", lambda: app.toggle_connected_proximal(), "Prox Connected")
+    mode_manager.register(Mode.SYNAPSE, "u", lambda: app.toggle_potential_proximal(), "Prox Potential")
+    mode_manager.register(Mode.SYNAPSE, "o", lambda: app.toggle_outgoing_synapses(), "Outgoing(cell)")
+    mode_manager.register(Mode.SYNAPSE, "i", lambda: app.toggle_incoming_synapses(), "Incoming(seg)")
+    mode_manager.register(Mode.SYNAPSE, "g", lambda: app.toggle_go_apical(), "Go apical")
+    mode_manager.register(Mode.SYNAPSE, "n", lambda: app.toggle_nogo_apical(), "NoGo apical")
+
+    # --- SELECT mode ---
+    mode_manager.register(Mode.SELECT, "x", lambda: app.clear_selection(), "Clear select")
+    mode_manager.register(Mode.SELECT, "bracketleft", lambda: app.selection_back(), "Hist back")
+    mode_manager.register(Mode.SELECT, "bracketright", lambda: app.selection_forward(), "Hist forward")
+
+    # --- COLOR mode (mnemonic letters) ---
+    mode_manager.register(Mode.COLOR, "a", lambda: app.toggle_state_color("active"), "Active")
+    mode_manager.register(Mode.COLOR, "p", lambda: app.toggle_state_color("predictive"), "Predictive")
+    mode_manager.register(Mode.COLOR, "b", lambda: app.toggle_state_color("bursting"), "Bursting")
+    mode_manager.register(Mode.COLOR, "w", lambda: app.toggle_state_color("winner"), "Winner")
+    mode_manager.register(Mode.COLOR, "k", lambda: app.toggle_state_color("correct_prediction"), "Correct Pred")
+    mode_manager.register(Mode.COLOR, "g", lambda: app.toggle_state_color("go_depolarized"), "Go Depol")
+    mode_manager.register(Mode.COLOR, "n", lambda: app.toggle_state_color("nogo_depolarized"), "NoGo Depol")
+    mode_manager.register(Mode.COLOR, "s", lambda: app.toggle_segment_state_color("active"), "Seg Active")
+    mode_manager.register(Mode.COLOR, "l", lambda: app.toggle_segment_state_color("learning"), "Seg Learning")
+    mode_manager.register(Mode.COLOR, "m", lambda: app.toggle_segment_state_color("matching"), "Seg Matching")
+
+    # --- Field visibility toggles (NORMAL mode, dynamic) ---
+    _setup_field_key_bindings(mode_manager, app)
+
+    # --- Wire all registered keys to PyVista via a single dispatcher per key ---
+    for key in mode_manager.all_registered_keys():
+        def make_handler(k):
+            def handler():
+                mode_manager.dispatch(k)
+            return handler
+        plotter.add_key_event(key, make_handler(key))
 
 
-def _setup_field_key_bindings(plotter, app):
-    """Assign letter shortcuts to fields based on their names."""
+# Keys reserved in NORMAL mode (our shortcuts + mode switches + PyVista)
+NORMAL_RESERVED = {
+    "r", "a", "l", "t", "h", "v", "m", "c",  # NORMAL mode keys
+} | _PYVISTA_RESERVED
+
+
+def _setup_field_key_bindings(mode_manager: ModeManager, app):
+    """Assign letter shortcuts to fields, registered under NORMAL mode."""
     field_names = app.get_field_names()
-    used_keys: set[str] = set(RESERVED_KEYS)
+    used_keys: set[str] = set(NORMAL_RESERVED)
     field_keys: dict[str, str] = {}  # key -> field_name
 
     for field_name in field_names:
-        # Find first available letter from the field name
         assigned_key = None
         for char in field_name.lower():
             if char.isalpha() and char not in used_keys:
@@ -121,11 +142,14 @@ def _setup_field_key_bindings(plotter, app):
         if assigned_key:
             field_keys[assigned_key] = field_name
 
-            # Create closure properly
             def make_toggle(fname):
                 return lambda: app.toggle_field(fname)
 
-            plotter.add_key_event(assigned_key, make_toggle(field_name))
+            mode_manager.register(
+                Mode.NORMAL, assigned_key,
+                make_toggle(field_name),
+                field_name,
+                section="Fields",
+            )
 
-    # Store the mapping in the app for display purposes
     app.set_field_keys(field_keys)
