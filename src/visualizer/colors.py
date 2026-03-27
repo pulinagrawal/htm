@@ -82,6 +82,11 @@ def color_to_float(color: tuple) -> tuple:
     return (color[0] / 255, color[1] / 255, color[2] / 255)
 
 
+# OutputField probability gradient colors
+PROB_NEUTRAL_COLOR = (80, 80, 80)       # At base probability — dim gray
+PROB_GO_COLOR = (255, 200, 0)           # Above base — gold (Go excitation)
+PROB_NOGO_COLOR = (80, 50, 180)         # Below base — purple (NoGo suppression)
+
 # Apical segment state colors
 APICAL_SEGMENT_COLORS = {
     "inactive":  (60, 60, 60),
@@ -155,3 +160,36 @@ def apical_segment_color(segment) -> tuple:
         else:
             return APICAL_SEGMENT_COLORS["nogo_active"]
     return APICAL_SEGMENT_COLORS["inactive"]
+
+
+def probability_color(prob: float, base_prob: float) -> tuple:
+    """Map activation probability to a diverging color relative to base probability.
+
+    prob < base_prob  →  purple (NoGo suppression), darker as prob approaches 0
+    prob == base_prob →  dim gray (neutral / unmodulated)
+    prob > base_prob  →  gold (Go excitation), brighter as prob approaches 1
+
+    Args:
+        prob: The cell's activation probability [0, 1].
+        base_prob: The field's base_activation_probability (the unmodulated default).
+    """
+    prob = max(0.0, min(1.0, prob))
+    base_prob = max(0.001, min(0.999, base_prob))
+
+    if prob <= base_prob:
+        # Below base: blend from purple (at 0) to neutral gray (at base)
+        t = prob / base_prob if base_prob > 0 else 0.0
+        return (
+            int(PROB_NOGO_COLOR[0] + (PROB_NEUTRAL_COLOR[0] - PROB_NOGO_COLOR[0]) * t),
+            int(PROB_NOGO_COLOR[1] + (PROB_NEUTRAL_COLOR[1] - PROB_NOGO_COLOR[1]) * t),
+            int(PROB_NOGO_COLOR[2] + (PROB_NEUTRAL_COLOR[2] - PROB_NOGO_COLOR[2]) * t),
+        )
+    else:
+        # Above base: blend from neutral gray (at base) to bright gold (at 1)
+        span = 1.0 - base_prob
+        t = (prob - base_prob) / span if span > 0 else 0.0
+        return (
+            int(PROB_NEUTRAL_COLOR[0] + (PROB_GO_COLOR[0] - PROB_NEUTRAL_COLOR[0]) * t),
+            int(PROB_NEUTRAL_COLOR[1] + (PROB_GO_COLOR[1] - PROB_NEUTRAL_COLOR[1]) * t),
+            int(PROB_NEUTRAL_COLOR[2] + (PROB_GO_COLOR[2] - PROB_NEUTRAL_COLOR[2]) * t),
+        )

@@ -12,7 +12,7 @@ import pyvista as pv
 from .colors import (
     COLORS, INPUT_FIELD_COLORS, SEGMENT_COLORS, APICAL_SEGMENT_COLORS,
     color_to_float, state_color, segment_color, apical_segment_color,
-    permanence_color, LABEL_COLOR,
+    permanence_color, probability_color, LABEL_COLOR,
 )
 
 # Note: Incoming synapses = synapses feeding INTO a selected segment from source cells
@@ -442,15 +442,23 @@ class BrainRenderer:
             n = len(field.cells)
             if n == 0:
                 continue
-            
+
             # Handle hidden fields
             if not self.is_field_visible(name):
                 self._add_empty_mesh(plotter, f"input_{name}")
                 continue
-                
+
             base_color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
             dim_color = tuple(c // 4 for c in base_color)
-            
+
+            # OutputField: use activation probability diverging gradient
+            is_output = hasattr(field, 'activation_probabilities')
+            probs = None
+            base_prob = 0.1
+            if is_output:
+                probs = field.activation_probabilities()
+                base_prob = getattr(field, 'base_activation_probability', 0.1)
+
             # Filter cells based on hide_inactive setting
             points_list = []
             colors_list = []
@@ -459,7 +467,12 @@ class BrainRenderer:
                 if self.hide_inactive and not is_active:
                     continue
                 points_list.append(layout.cell_positions[(ci, 0)])
-                if cell.predictive and cell.active:
+                if probs:
+                    if cell.active:
+                        colors_list.append(COLORS["active"])
+                    else:
+                        colors_list.append(probability_color(probs[ci], base_prob))
+                elif cell.predictive and cell.active:
                     colors_list.append(COLORS["correct_prediction"])
                 elif cell.predictive:
                     colors_list.append(COLORS["predictive"])
@@ -467,7 +480,7 @@ class BrainRenderer:
                     colors_list.append(base_color)
                 else:
                     colors_list.append(dim_color)
-            
+
             if points_list:
                 self._add_sphere_glyph(plotter, np.array(points_list), np.array(colors_list, dtype=np.uint8), INPUT_CELL_RADIUS, f"input_{name}")
             else:
@@ -492,17 +505,19 @@ class BrainRenderer:
             n = len(field.cells)
             if n == 0:
                 continue
-            
+
             # Handle hidden fields
             if not self.is_field_visible(name):
                 self._add_empty_mesh(plotter, f"input_{name}")
                 continue
-                
+
             base_color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
             dim_color = tuple(c // 4 for c in base_color)
             active_set = set(snapshot.input_active.get(name, []))
             pred_set = set(snapshot.input_predictive.get(name, []))
-            
+            probs = snapshot.output_probabilities.get(name)
+            base_prob = getattr(field, 'base_activation_probability', 0.1) if hasattr(field, 'activation_probabilities') else 0.1
+
             # Filter cells based on hide_inactive setting
             points_list = []
             colors_list = []
@@ -511,7 +526,12 @@ class BrainRenderer:
                 if self.hide_inactive and not is_active:
                     continue
                 points_list.append(layout.cell_positions[(ci, 0)])
-                if ci in pred_set and ci in active_set:
+                if probs:
+                    if ci in active_set:
+                        colors_list.append(COLORS["active"])
+                    else:
+                        colors_list.append(probability_color(probs[ci], base_prob))
+                elif ci in pred_set and ci in active_set:
                     colors_list.append(COLORS["correct_prediction"])
                 elif ci in pred_set:
                     colors_list.append(COLORS["predictive"])
@@ -519,7 +539,7 @@ class BrainRenderer:
                     colors_list.append(base_color)
                 else:
                     colors_list.append(dim_color)
-            
+
             if points_list:
                 self._add_sphere_glyph(plotter, np.array(points_list), np.array(colors_list, dtype=np.uint8), INPUT_CELL_RADIUS, f"input_{name}")
             else:
@@ -605,7 +625,7 @@ class BrainRenderer:
         glow_radii = []
         for sel in selections:
             glow_pts.append(sel["pos"])
-            if sel["type"] == "segment":
+            if sel["type"] in ("segment", "apical_segment"):
                 glow_radii.append(SEGMENT_RADIUS * HIGHLIGHT_RADIUS_SCALE)
             elif sel["type"] == "input_cell":
                 glow_radii.append(INPUT_CELL_RADIUS * HIGHLIGHT_RADIUS_SCALE)
@@ -629,7 +649,7 @@ class BrainRenderer:
         for sel in selections:
             if sel["type"] == "cell":
                 selected_cell_ids.add(id(sel["obj"]))
-            elif sel["type"] == "segment":
+            elif sel["type"] in ("segment", "apical_segment"):
                 selected_cell_ids.add(id(sel["obj"].parent_cell))
                 selected_seg_positions[id(sel["obj"])] = sel["pos"]
             elif sel["type"] == "input_cell":

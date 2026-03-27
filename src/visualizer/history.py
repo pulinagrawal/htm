@@ -35,6 +35,10 @@ class HTMSnapshot:
     td_avg_error: dict[str, float] = field(default_factory=dict)
     td_avg_value: dict[str, float] = field(default_factory=dict)
 
+    # OutputField activation probabilities and decoded action
+    output_probabilities: dict[str, list[float]] = field(default_factory=dict)
+    output_decoded: dict[str, dict] = field(default_factory=dict)
+
     # Stats
     num_segments: dict[str, int] = field(default_factory=dict)
     num_synapses: dict[str, int] = field(default_factory=dict)
@@ -111,6 +115,17 @@ class History:
             for name, vf in brain._value_fields.items():
                 snap.td_avg_error[name] = vf.avg_error
                 snap.td_avg_value[name] = vf.avg_value()
+
+        # OutputField activation probabilities and decoded action
+        if hasattr(brain, '_output_fields'):
+            for name, of in brain._output_fields.items():
+                if hasattr(of, 'activation_probabilities'):
+                    snap.output_probabilities[name] = of.activation_probabilities()
+                if hasattr(of, 'decode'):
+                    try:
+                        snap.output_decoded[name] = of.decode()
+                    except Exception:
+                        snap.output_decoded[name] = {"value": None, "confidence": None}
 
         # Trim future if we stepped back then captured new
         if self._position < len(self._buffer) - 1:

@@ -12,6 +12,7 @@ from .history import History, HTMSnapshot
 from .colors import (
     color_to_float, TEXT_COLOR, TITLE_COLOR, BG_COLOR,
     COLORS, SEGMENT_COLORS, APICAL_SEGMENT_COLORS,
+    PROB_GO_COLOR, PROB_NOGO_COLOR, PROB_NEUTRAL_COLOR,
 )
 
 
@@ -347,20 +348,60 @@ class HTMVisualizer:
     def _format_selection(self, sel: dict) -> str:
         if sel["type"] == "cell":
             cell = sel["obj"]
+            field_name = sel["field"]
             text = (
-                f"CELL  {sel['field']} col={sel['col']} cell={sel['cell']}\n"
+                f"CELL  {field_name} col={sel['col']} cell={sel['cell']}\n"
                 f"  active:     {sel['active']}\n"
                 f"  predictive: {sel['predictive']}\n"
                 f"  winner:     {sel['winner']}\n"
-                f"  segments:   {sel['segments']}\n"
             )
-            for si, seg in enumerate(cell.segments):
+            # Go/NoGo depolarization
+            if hasattr(cell, 'go_depolarized'):
+                text += f"  go_depol:   {cell.go_depolarized}\n"
+                text += f"  nogo_depol: {cell.nogo_depolarized}\n"
+
+            # Column overlap
+            col_obj = None
+            field_obj = self.brain.all_column_fields.get(field_name)
+            if field_obj and sel['col'] < len(field_obj.columns):
+                col_obj = field_obj.columns[sel['col']]
+                if hasattr(col_obj, 'overlap'):
+                    text += f"  overlap:    {col_obj.overlap}\n"
+
+            # TD value and eligibility trace (if in a ValueField)
+            if hasattr(self.brain, '_value_fields') and field_name in self.brain._value_fields:
+                vf = self.brain._value_fields[field_name]
+                cell_flat_idx = sel['col'] * len(field_obj.columns[0].cells) + sel['cell']
+                if cell_flat_idx < len(vf.values):
+                    text += f"  td_value:   {vf.values[cell_flat_idx]:.4f}\n"
+                    text += f"  trace:      {vf.traces[cell_flat_idx]:.4f}\n"
+
+            # Distal segments
+            text += f"  distal_seg: {len(cell.distal_segments)}\n"
+            for si, seg in enumerate(cell.distal_segments):
                 connected = sum(1 for s in seg.synapses if s.permanence >= 0.5)
                 text += (
-                    f"  seg[{si}] syn={len(seg.synapses)} "
+                    f"  d[{si}] syn={len(seg.synapses)} "
                     f"conn={connected} "
                     f"act={seg.active} lrn={seg.learning}\n"
                 )
+
+            # Apical segments
+            apical_segs = getattr(cell, 'apical_segments', [])
+            if apical_segs:
+                go_segs = getattr(cell, 'go_segments', [])
+                nogo_segs = getattr(cell, 'nogo_segments', [])
+                text += f"  go_segs:    {len(go_segs)}\n"
+                text += f"  nogo_segs:  {len(nogo_segs)}\n"
+                for ai, aseg in enumerate(apical_segs):
+                    sign_label = "Go" if aseg.sign > 0 else "NoGo"
+                    connected = sum(1 for s in aseg.synapses if s.permanence >= 0.5)
+                    text += (
+                        f"  a[{ai}] {sign_label} syn={len(aseg.synapses)} "
+                        f"conn={connected} "
+                        f"score={aseg.score()} act={aseg.active}\n"
+                    )
+
             return text
         elif sel["type"] == "segment":
             seg = sel["obj"]
@@ -381,12 +422,41 @@ class HTMVisualizer:
                     f"  perm mean:  {sum(perms)/len(perms):.3f}\n"
                 )
             return text
+        elif sel["type"] == "apical_segment":
+            aseg = sel["obj"]
+            sign_label = "Go" if sel.get('sign', 1) > 0 else "NoGo"
+            connected = sum(1 for s in aseg.synapses if s.permanence >= 0.5)
+            perms = [s.permanence for s in aseg.synapses]
+            text = (
+                f"APICAL SEG ({sign_label})  {sel['field']} col={sel['col']} "
+                f"cell={sel['cell']} seg={sel['seg']}\n"
+                f"  synapses:   {sel['synapses']}\n"
+                f"  connected:  {connected}\n"
+                f"  score:      {sel['score']}\n"
+                f"  active:     {sel['active']}\n"
+                f"  learning:   {sel['learning']}\n"
+            )
+            if perms:
+                text += (
+                    f"  perm range: {min(perms):.3f} - {max(perms):.3f}\n"
+                    f"  perm mean:  {sum(perms)/len(perms):.3f}\n"
+                )
+            return text
         elif sel["type"] == "input_cell":
-            return (
-                f"INPUT CELL  {sel['field']} idx={sel['index']}\n"
+            field_name = sel['field']
+            text = (
+                f"INPUT CELL  {field_name} idx={sel['index']}\n"
                 f"  active:     {sel['active']}\n"
                 f"  predictive: {sel['predictive']}\n"
             )
+            # OutputField: show activation probability
+            field_obj = self.brain.all_input_fields.get(field_name)
+            if field_obj and hasattr(field_obj, 'activation_probabilities'):
+                probs = field_obj.activation_probabilities()
+                idx = sel['index']
+                if idx < len(probs):
+                    text += f"  act_prob:   {probs[idx]:.4f}\n"
+            return text
         return ""
 
     # ------------------------------------------------------------------
@@ -577,6 +647,16 @@ class HTMVisualizer:
                     lines.append(f"  Go Segs:     {go_count}")
                     lines.append(f"  NoGo Segs:   {nogo_count}")
 
+        # OutputField decoded action and confidence
+        if snap and snap.output_decoded:
+            for name, decoded in snap.output_decoded.items():
+                lines.append(f"\n[{name} Output]")
+                val = decoded.get("value") if isinstance(decoded, dict) else None
+                conf = decoded.get("confidence") if isinstance(decoded, dict) else None
+                lines.append(f"  Action:     {val}")
+                if conf is not None:
+                    lines.append(f"  Confidence: {conf:.4f}")
+
         if self.burst_history:
             recent = self.burst_history[-20:]
             lines.append(f"\nBurst Avg(20): {sum(recent)/len(recent):.1f}")
@@ -698,6 +778,8 @@ class HTMVisualizer:
             "          3  Bursting      \n"
             "          4  Winner        \n"
             "          5  Correct Pred  \n"
+            "          9  Go Depol      \n"
+            "          0  NoGo Depol    \n"
             "                          \n"
             "──── Segment Colors Toggle\n"
             "          6  Active        \n"
@@ -757,7 +839,13 @@ class HTMVisualizer:
             ("Apical Learning", color_to_float(APICAL_SEGMENT_COLORS["learning"])),
         ]
 
-        all_entries = cell_entries + segment_entries + apical_entries
+        prob_entries = [
+            ("Prob Go (above base)", color_to_float(PROB_GO_COLOR)),
+            ("Prob Neutral (at base)", color_to_float(PROB_NEUTRAL_COLOR)),
+            ("Prob NoGo (below base)", color_to_float(PROB_NOGO_COLOR)),
+        ]
+
+        all_entries = cell_entries + segment_entries + apical_entries + prob_entries
 
         legend_actor = self.plotter.add_legend(
             labels=all_entries,
