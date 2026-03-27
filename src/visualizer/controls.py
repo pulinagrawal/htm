@@ -110,13 +110,21 @@ def setup_key_bindings(plotter, app, mode_manager: ModeManager):
     # --- Field visibility toggles (NORMAL mode, dynamic) ---
     _setup_field_key_bindings(mode_manager, app)
 
-    # --- Wire all registered keys to PyVista via a single dispatcher per key ---
-    for key in mode_manager.all_registered_keys():
-        def make_handler(k):
-            def handler():
-                mode_manager.dispatch(k)
-            return handler
-        plotter.add_key_event(key, make_handler(key))
+    # --- Wire keys directly via a VTK observer with high priority ---
+    # This fires BEFORE VTK's interactor style processes the key.
+    # We clear the key symbol after dispatching so VTK's OnChar finds
+    # nothing to act on (prevents built-in t=timer, s=surface, etc.).
+    managed_keys = mode_manager.all_registered_keys()
+    iren = plotter.iren.interactor
+
+    def on_key_press(obj, event):
+        key = obj.GetKeySym()
+        if key and key in managed_keys:
+            mode_manager.dispatch(key)
+            obj.SetKeySym("")
+            obj.SetKeyCode("\0")
+
+    iren.AddObserver("KeyPressEvent", on_key_press, 100.0)
 
 
 # Keys reserved in NORMAL mode (our shortcuts + mode switches + PyVista)
