@@ -70,8 +70,10 @@ class BrainRenderer:
         self.layouts: dict[str, FieldLayout] = {}
         self._cell_id_to_pos: dict[int, np.ndarray] = {}
         self.show_synapses = True
+        self.synapse_selection_only = False
         self.show_outgoing_synapses = True
         self.show_incoming_synapses = True
+        self.show_segments = True
         self.show_go_apical = True
         self.show_nogo_apical = True
         self.hidden_fields: set[str] = set()
@@ -338,6 +340,14 @@ class BrainRenderer:
             self._add_empty_mesh(plotter, f"cells_{name}")
 
     def _render_segments_and_synapses(self, plotter, name, field, layout):
+        # If segments are globally hidden, clear all segment/synapse actors
+        if not self.show_segments:
+            self._add_empty_mesh(plotter, f"segments_{name}")
+            self._add_empty_mesh(plotter, f"synapses_{name}")
+            self._add_empty_mesh(plotter, f"apical_segments_{name}")
+            self._add_empty_mesh(plotter, f"apical_synapses_{name}")
+            return
+
         seg_positions = []
         seg_colors = []
         syn_starts = []
@@ -371,7 +381,7 @@ class BrainRenderer:
                         seg_positions.append(seg_pos)
                         seg_colors.append(segment_color(seg, self.hidden_segment_states))
 
-                        if self.show_synapses:
+                        if self.show_synapses and not self.synapse_selection_only:
                             for syn in seg.synapses:
                                 src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
                                 if src_pos is not None:
@@ -398,7 +408,7 @@ class BrainRenderer:
                         apical_seg_positions.append(aseg_pos)
                         apical_seg_colors.append(apical_segment_color(aseg))
 
-                        if self.show_synapses:
+                        if self.show_synapses and not self.synapse_selection_only:
                             for syn in aseg.synapses:
                                 src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
                                 if src_pos is not None:

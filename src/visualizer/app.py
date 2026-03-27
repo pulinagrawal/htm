@@ -21,10 +21,10 @@ class HTMVisualizer:
     """Interactive 3D HTM Brain visualizer using PyVista.
 
     Modal keyboard system with four modes:
-        NORMAL (default)  Camera, field toggles, UI controls
-        SYNAPSE (V)       Synapse/connection visibility
-        SELECT  (M)       Click picking, multi-select, history
-        COLOR   (C)       Cell + segment state color toggles
+        NORMAL  (default)  Camera, UI controls
+        SYNAPSE (S)        Synapse/connection visibility
+        PICK    (P)        Click picking, multi-select, history
+        CELL    (C)        Cell/segment colors + field toggles
 
     Press H for mode-aware shortcuts. ESC returns to NORMAL.
     """
@@ -53,6 +53,9 @@ class HTMVisualizer:
         # Selection history
         self._selection_history: list[list[dict]] = []
         self._sel_hist_pos: int = -1
+
+        # Saved synapse state for toggle on/off
+        self._saved_synapse_state: dict | None = None
 
         # Legend and shortcuts visibility
         self._show_legend = False
@@ -238,7 +241,7 @@ class HTMVisualizer:
         if click_pos is None:
             return
         # Only pick in SELECT mode
-        if self.mode_manager.current_mode != Mode.SELECT:
+        if self.mode_manager.current_mode != Mode.PICK:
             return
 
         # Build a ray from camera through the clicked world position
@@ -332,7 +335,7 @@ class HTMVisualizer:
 
     def _update_selection_overlay(self):
         if not self._selections:
-            text = "M for Select mode | Click to pick | Shift+Click: multi"
+            text = "P for Pick mode | Click to pick | Shift+Click: multi"
         elif len(self._selections) == 1:
             text = self._format_selection(self._selections[0])
         else:
@@ -525,6 +528,48 @@ class HTMVisualizer:
         self.brain_renderer.show_nogo_apical = not self.brain_renderer.show_nogo_apical
         self._update_display()
 
+    def _get_synapse_state(self) -> dict:
+        """Capture current synapse visibility flags."""
+        return {
+            "synapses": self.brain_renderer.show_synapses,
+            "outgoing": self.brain_renderer.show_outgoing_synapses,
+            "incoming": self.brain_renderer.show_incoming_synapses,
+            "proximal": self.show_proximal,
+            "connected": self.conn_renderer.show_connected_proximal,
+            "potential": self.conn_renderer.show_potential_proximal,
+            "go": self.brain_renderer.show_go_apical,
+            "nogo": self.brain_renderer.show_nogo_apical,
+        }
+
+    def _set_synapse_state(self, state: dict):
+        """Restore synapse visibility flags from a saved state."""
+        self.brain_renderer.show_synapses = state["synapses"]
+        self.brain_renderer.show_outgoing_synapses = state["outgoing"]
+        self.brain_renderer.show_incoming_synapses = state["incoming"]
+        self.show_proximal = state["proximal"]
+        self.conn_renderer.show_connected_proximal = state["connected"]
+        self.conn_renderer.show_potential_proximal = state["potential"]
+        self.brain_renderer.show_go_apical = state["go"]
+        self.brain_renderer.show_nogo_apical = state["nogo"]
+
+    def toggle_all_synapses(self):
+        """Toggle between last active synapse state and all off."""
+        all_off = not any(self._get_synapse_state().values())
+        if all_off and self._saved_synapse_state:
+            # Restore saved state
+            self._set_synapse_state(self._saved_synapse_state)
+            self._saved_synapse_state = None
+        else:
+            # Save current state, then turn all off
+            self._saved_synapse_state = self._get_synapse_state()
+            self._set_synapse_state({k: False for k in self._saved_synapse_state})
+        self._update_display()
+
+    def toggle_synapse_selection_only(self):
+        """Toggle synapses to show only for selected elements."""
+        self.brain_renderer.synapse_selection_only = not self.brain_renderer.synapse_selection_only
+        self._update_display()
+
     def toggle_inactive(self):
         self.brain_renderer.hide_inactive = not self.brain_renderer.hide_inactive
         self._update_display()
@@ -535,6 +580,11 @@ class HTMVisualizer:
             self.brain_renderer.hidden_states.remove(state_name)
         else:
             self.brain_renderer.hidden_states.add(state_name)
+        self._update_display()
+
+    def toggle_segments(self):
+        """Toggle global segment visibility."""
+        self.brain_renderer.show_segments = not self.brain_renderer.show_segments
         self._update_display()
 
     def toggle_segment_state_color(self, state_name: str):
@@ -593,9 +643,9 @@ class HTMVisualizer:
 
     # Mode entries shown in the top hint bar: (key, label, Mode)
     _MODE_HINTS = [
-        ("V", "Synapse", Mode.SYNAPSE),
-        ("M", "Select",  Mode.SELECT),
-        ("C", "Color",   Mode.COLOR),
+        ("S", "Synapse", Mode.SYNAPSE),
+        ("P", "Pick",    Mode.PICK),
+        ("C", "Cell",    Mode.CELL),
     ]
 
     def _add_controls_text(self):
@@ -808,32 +858,40 @@ class HTMVisualizer:
         return key.upper() if len(key) == 1 else key
 
     @staticmethod
-    def _highlight_mnemonic(key_display: str, desc: str) -> str:
-        """Wrap the first occurrence of the mnemonic letter in [] within desc."""
-        if len(key_display) != 1:
-            return desc
-        letter = key_display.upper()
-        for i, ch in enumerate(desc):
-            if ch.upper() == letter:
-                return desc[:i] + "[" + desc[i] + "]" + desc[i + 1:]
-        return desc
+    @staticmethod
+    def _parse_mnemonic(desc: str) -> tuple[str, int]:
+        """Parse a description with a _ mnemonic marker.
+
+        The _ character marks the next letter as the mnemonic.
+        Returns (clean_desc, mnemonic_index) where mnemonic_index is
+        the position in the cleaned string, or -1 if no marker found.
+        """
+        idx = desc.find("_")
+        if idx < 0 or idx + 1 >= len(desc):
+            return desc, -1
+        clean = desc[:idx] + desc[idx + 1:]
+        return clean, idx
 
     def _format_shortcut_block(
         self, label: str, mode: Mode,
         sections: dict[str, list[tuple[str, str]]],
         global_bindings: list[tuple[str, str]],
-    ) -> str:
-        """Build a fixed-width text block for the shortcuts overlay.
+    ) -> tuple[str, str]:
+        """Build two fixed-width text blocks for the shortcuts overlay.
 
-        Every line is padded to the same width so VTK's upper_right
-        positioning produces a clean rectangular block.
+        Returns (base_text, highlight_mask) where:
+        - base_text: full text rendered in dim color
+        - highlight_mask: spaces everywhere except mnemonic letters, rendered bright
+
+        Both are padded to the same width for VTK alignment.
         """
-        # First pass: collect all (display_key, desc) pairs to measure key_width
+        # First pass: collect all (display_key, raw_desc) pairs to measure key_width
+        # raw_desc may contain & mnemonic markers
         all_pairs: list[tuple[str, str]] = []
 
-        if mode == Mode.SELECT:
-            all_pairs.append(("Click", "Select"))
-            all_pairs.append(("Shift+Click", "Multi-select"))
+        if mode == Mode.PICK:
+            all_pairs.append(("Click", "Pick"))
+            all_pairs.append(("Shift+Click", "Multi-pick"))
 
         for sec_name, bindings in sections.items():
             for key, desc in bindings:
@@ -846,39 +904,62 @@ class HTMVisualizer:
             if dk is not None:
                 all_pairs.append((dk, desc))
 
+        # Measure widths using cleaned descriptions (& stripped)
         key_width = max((len(k) for k, _ in all_pairs), default=5)
         key_width = max(key_width, 5)
 
-        def row(dk: str, desc: str) -> str:
-            highlighted = self._highlight_mnemonic(dk, desc)
-            return f"{dk:>{key_width}}  {highlighted}"
+        def row(dk: str, raw_desc: str) -> tuple[str, str]:
+            """Return (base_line, highlight_line) for one shortcut row."""
+            clean_desc, mi = self._parse_mnemonic(raw_desc)
+            base = f"{dk:>{key_width}}  {clean_desc}"
+            if mi >= 0:
+                # Offset into full line: key_width + 2 spaces + index in desc
+                abs_idx = key_width + 2 + mi
+                highlight = " " * abs_idx + clean_desc[mi] + " " * (len(base) - abs_idx - 1)
+            else:
+                highlight = " " * len(base)
+            return base, highlight
 
         # Second pass: build lines with section headers
-        raw_lines: list[str] = ["", f"  [ {label} MODE ]"]
+        base_lines: list[str] = []
+        hl_lines: list[str] = []
 
-        if mode == Mode.SELECT:
-            raw_lines.append(row("Click", "Select"))
-            raw_lines.append(row("Shift+Click", "Multi-select"))
+        def add(base: str, hl: str = ""):
+            base_lines.append(base)
+            hl_lines.append(hl if hl else " " * len(base))
+
+        add("")
+        add(f"  [{label} MODE]")
+
+        if mode == Mode.PICK:
+            b, h = row("Click", "Pick")
+            add(b, h)
+            b, h = row("Shift+Click", "Multi-pick")
+            add(b, h)
 
         for sec_name, bindings in sections.items():
             if sec_name:
-                raw_lines.append("")
-                raw_lines.append(f"{sec_name:>{key_width + 2}}")
+                add("")
+                add(f"{sec_name:>{key_width + 2}}")
             for key, desc in bindings:
                 dk = self._display_key(key)
                 if dk is not None:
-                    raw_lines.append(row(dk, desc))
+                    b, h = row(dk, desc)
+                    add(b, h)
 
         # Global section
-        raw_lines.append("")
-        raw_lines.append(f"{'Global':>{key_width + 2}}")
+        add("")
+        add(f"{'Global':>{key_width + 2}}")
         for key, desc in global_bindings:
             dk = self._display_key(key)
             if dk is not None:
-                raw_lines.append(row(dk, desc))
+                b, h = row(dk, desc)
+                add(b, h)
 
-        width = max(len(line) for line in raw_lines)
-        return "\n".join(line.ljust(width) for line in raw_lines)
+        width = max(len(line) for line in base_lines)
+        base_text = "\n".join(line.ljust(width) for line in base_lines)
+        hl_text = "\n".join(line.ljust(width) for line in hl_lines)
+        return base_text, hl_text
 
     def _update_shortcuts(self):
         # Remove existing shortcuts actors
@@ -898,21 +979,33 @@ class HTMVisualizer:
         sections = self.mode_manager.get_bindings_by_section()
         global_bindings = self.mode_manager.get_global_bindings_for_display()
 
-        shortcuts_text = self._format_shortcut_block(label, mode, sections, global_bindings)
+        base_text, hl_text = self._format_shortcut_block(label, mode, sections, global_bindings)
 
-        # Create text actor with monospace font
-        actor = self.plotter.add_text(
-            shortcuts_text,
+        # Base layer: dim text with all characters
+        dim_color = (0.55, 0.55, 0.55)
+        actor_base = self.plotter.add_text(
+            base_text,
             position="upper_right",
             font_size=10,
-            color=color_to_float(TEXT_COLOR),
+            color=dim_color,
             name="shortcuts_box",
             font="courier",
         )
-        # Set text properties for box styling
-        actor.GetTextProperty().SetBackgroundColor(0.0, 0.0, 0.0)
-        actor.GetTextProperty().SetBackgroundOpacity(0)
-        self._shortcuts_actors.append(actor)
+        actor_base.GetTextProperty().SetBackgroundColor(0.0, 0.0, 0.0)
+        actor_base.GetTextProperty().SetBackgroundOpacity(0)
+        self._shortcuts_actors.append(actor_base)
+
+        # Highlight layer: bright mnemonic letters only (rest spaces)
+        actor_hl = self.plotter.add_text(
+            hl_text,
+            position="upper_right",
+            font_size=10,
+            color=(1.0, 1.0, 1.0),
+            name="shortcuts_highlight",
+            font="courier",
+        )
+        actor_hl.GetTextProperty().SetBackgroundOpacity(0)
+        self._shortcuts_actors.append(actor_hl)
 
     def _update_legend(self):
         # Remove existing legend actors
@@ -929,33 +1022,33 @@ class HTMVisualizer:
 
         # Build legend entries as (label, color) tuples using actual color variables
         cell_entries = [
-            ("Active", color_to_float(COLORS["active"])),
-            ("Predictive", color_to_float(COLORS["predictive"])),
-            ("Bursting", color_to_float(COLORS["bursting"])),
-            ("Winner", color_to_float(COLORS["winner"])),
-            ("Correct Pred", color_to_float(COLORS["correct_prediction"])),
-            ("Go Depol", color_to_float(COLORS["go_depolarized"])),
-            ("NoGo Depol", color_to_float(COLORS["nogo_depolarized"])),
-            ("Inactive", color_to_float(COLORS["inactive"])),
+            ("Active Cell", color_to_float(COLORS["active"])),
+            ("Predictive Cell", color_to_float(COLORS["predictive"])),
+            ("Bursting Cell", color_to_float(COLORS["bursting"])),
+            ("Winner Cell", color_to_float(COLORS["winner"])),
+            ("Correct Prediction", color_to_float(COLORS["correct_prediction"])),
+            ("Go Depolarized", color_to_float(COLORS["go_depolarized"])),
+            ("NoGo Depolarized", color_to_float(COLORS["nogo_depolarized"])),
+            ("Inactive Cell", color_to_float(COLORS["inactive"])),
         ]
 
         segment_entries = [
-            ("Seg Active", color_to_float(SEGMENT_COLORS["active"])),
-            ("Seg Learning", color_to_float(SEGMENT_COLORS["learning"])),
-            ("Seg Matching", color_to_float(SEGMENT_COLORS["matching"])),
-            ("Seg Inactive", color_to_float(SEGMENT_COLORS["inactive"])),
+            ("Active Segment", color_to_float(SEGMENT_COLORS["active"])),
+            ("Learning Segment", color_to_float(SEGMENT_COLORS["learning"])),
+            ("Matching Segment", color_to_float(SEGMENT_COLORS["matching"])),
+            ("Inactive Segment", color_to_float(SEGMENT_COLORS["inactive"])),
         ]
 
         apical_entries = [
-            ("Go Seg Active", color_to_float(APICAL_SEGMENT_COLORS["go_active"])),
-            ("NoGo Seg Active", color_to_float(APICAL_SEGMENT_COLORS["nogo_active"])),
-            ("Apical Learning", color_to_float(APICAL_SEGMENT_COLORS["learning"])),
+            ("Go Apical Segment", color_to_float(APICAL_SEGMENT_COLORS["go_active"])),
+            ("NoGo Apical Segment", color_to_float(APICAL_SEGMENT_COLORS["nogo_active"])),
+            ("Apical Learning Segment", color_to_float(APICAL_SEGMENT_COLORS["learning"])),
         ]
 
         prob_entries = [
-            ("Prob Go (above base)", color_to_float(PROB_GO_COLOR)),
-            ("Prob Neutral (at base)", color_to_float(PROB_NEUTRAL_COLOR)),
-            ("Prob NoGo (below base)", color_to_float(PROB_NOGO_COLOR)),
+            ("Probability Go (above baseline)", color_to_float(PROB_GO_COLOR)),
+            ("Probability Neutral (at baseline)", color_to_float(PROB_NEUTRAL_COLOR)),
+            ("Probability NoGo (below baseline)", color_to_float(PROB_NOGO_COLOR)),
         ]
 
         all_entries = cell_entries + segment_entries + apical_entries + prob_entries
@@ -964,7 +1057,7 @@ class HTMVisualizer:
             labels=all_entries,
             bcolor=(0.0, 0.0, 0.0),
             border=False,
-            size=(0.1, 0.25),
+            size=(0.15, 0.35),
             name="legend",
             font_family="courier",
         )

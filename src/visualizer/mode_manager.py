@@ -1,7 +1,7 @@
 """Modal keyboard system for the HTM Visualizer.
 
 Modes group related shortcuts so each mode has a small, focused keyset.
-Mode-switch keys (V, M, C) only work from NORMAL mode -- no cross-mode jumping.
+Mode-switch keys (S, P, C) only work from NORMAL mode -- no cross-mode jumping.
 """
 
 from enum import Enum, auto
@@ -11,22 +11,22 @@ from typing import Callable
 class Mode(Enum):
     NORMAL = auto()
     SYNAPSE = auto()
-    SELECT = auto()
-    COLOR = auto()
+    PICK = auto()
+    CELL = auto()
 
 
 MODE_COLORS: dict[Mode, tuple[float, float, float]] = {
     Mode.NORMAL:  (1.0, 1.0, 1.0),
     Mode.SYNAPSE: (0.0, 0.9, 0.9),
-    Mode.SELECT:  (1.0, 0.9, 0.2),
-    Mode.COLOR:   (0.9, 0.3, 0.9),
+    Mode.PICK:    (1.0, 0.9, 0.2),
+    Mode.CELL:    (0.9, 0.3, 0.9),
 }
 
 MODE_LABELS: dict[Mode, str] = {
     Mode.NORMAL:  "NORMAL",
     Mode.SYNAPSE: "SYNAPSE",
-    Mode.SELECT:  "SELECT",
-    Mode.COLOR:   "COLOR",
+    Mode.PICK:    "PICK",
+    Mode.CELL:    "CELL",
 }
 
 
