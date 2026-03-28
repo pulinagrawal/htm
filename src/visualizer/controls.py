@@ -73,50 +73,59 @@ def setup_key_bindings(plotter, app, mode_manager: ModeManager):
 
     # --- NORMAL mode ---
     # Use _ before the mnemonic letter to mark it for highlighting
-    mode_manager.register(Mode.NORMAL, "s", lambda: mode_manager.enter_mode(Mode.SYNAPSE), "_Synapse mode")
-    mode_manager.register(Mode.NORMAL, "p", lambda: mode_manager.enter_mode(Mode.PICK), "_Pick mode")
-    mode_manager.register(Mode.NORMAL, "c", lambda: mode_manager.enter_mode(Mode.CELL), "_Cell mode")
-    mode_manager.register(Mode.NORMAL, "r", lambda: app.reset_view(), "_Reset camera")
-    mode_manager.register(Mode.NORMAL, "i", lambda: app.toggle_inactive(), "_Inactive cell visibility")
-    mode_manager.register(Mode.NORMAL, "v", lambda: app.toggle_all_synapses(), "Synapse _visibility")
-    mode_manager.register(Mode.NORMAL, "o", lambda: app.toggle_synapse_selection_only(), "Synapses selection _only")
-    mode_manager.register(Mode.NORMAL, "l", lambda: app.toggle_legend(), "_Legend")
-    mode_manager.register(Mode.NORMAL, "t", lambda: app.toggle_speed_slider(), "Speed slider")
+    # Modes (ordered: Cells, Synapses, Pick)
+    mode_manager.register(Mode.NORMAL, "c", lambda: mode_manager.enter_mode(Mode.CELL), "_Cell mode toggle", section='Modes')
+    mode_manager.register(Mode.NORMAL, "m", lambda: mode_manager.enter_mode(Mode.SEGMENT), "Seg_ment mode toggle", section='Modes')
+    mode_manager.register(Mode.NORMAL, "s", lambda: mode_manager.enter_mode(Mode.SYNAPSE), "_Synapse mode toggle", section='Modes')
+    mode_manager.register(Mode.NORMAL, "p", lambda: mode_manager.enter_mode(Mode.PICK), "_Pick mode toggle", section='Modes')
+
+    # Visibility
+    mode_manager.register(Mode.NORMAL, "i", lambda: app.toggle_inactive(), "_Inactive cell visibility", section="Visibility")
+    mode_manager.register(Mode.NORMAL, "v", lambda: app.toggle_all_synapses(), "_Visibile Synapses", section="Visibility")
+    mode_manager.register(Mode.NORMAL, "o", lambda: app.toggle_synapse_selection_only(), "_Only selected visible", section="Visibility")
+    mode_manager.register(Mode.NORMAL, "a", lambda: app.toggle_synapse_active_only(), "_Active elements only", section="Visibility")
+
+    # Shortcuts
+    mode_manager.register(Mode.NORMAL, "r", lambda: app.reset_view(), "_Reset camera", section="Shortcuts")
+    mode_manager.register(Mode.NORMAL, "l", lambda: app.toggle_legend(), "_Legend", section="Shortcuts")
+    mode_manager.register(Mode.NORMAL, "t", lambda: app.toggle_speed_slider(), "_Toggle Speed slider", section="Shortcuts")
 
     # --- SYNAPSE mode (_ marks mnemonic letter) ---
-    mode_manager.register(Mode.SYNAPSE, "s", lambda: mode_manager.exit_to_normal(), "Back to normal")
-    mode_manager.register(Mode.SYNAPSE, "d", lambda: app.toggle_synapses(), "_Distal synapses")
-    mode_manager.register(Mode.SYNAPSE, "o", lambda: app.toggle_outgoing_synapses(), "_Outgoing from cell")
-    mode_manager.register(Mode.SYNAPSE, "i", lambda: app.toggle_incoming_synapses(), "_Incoming to segment")
-    mode_manager.register(Mode.SYNAPSE, "p", lambda: app.toggle_proximal(), "_Proximal synapses")
-    mode_manager.register(Mode.SYNAPSE, "c", lambda: app.toggle_connected_proximal(), "_Connected proximal")
-    mode_manager.register(Mode.SYNAPSE, "u", lambda: app.toggle_potential_proximal(), "_Unconnected proximal")
-    mode_manager.register(Mode.SYNAPSE, "g", lambda: app.toggle_go_apical(), "_Go apical synapses")
-    mode_manager.register(Mode.SYNAPSE, "n", lambda: app.toggle_nogo_apical(), "_NoGo apical synapses")
+    mode_manager.register(Mode.SYNAPSE, "s", lambda: mode_manager.exit_to_normal(), "_Synapse mode toggle")
+    mode_manager.register(Mode.SYNAPSE, "d", lambda: app.toggle_synapses(), "_Distal Visibility", section="Distal")
+    mode_manager.register(Mode.SYNAPSE, "o", lambda: app.toggle_outgoing_synapses(), "_Outgoing from cell", section="Distal")
+    mode_manager.register(Mode.SYNAPSE, "i", lambda: app.toggle_incoming_synapses(), "_Incoming to segment", section="Distal")
+    mode_manager.register(Mode.SYNAPSE, "a", lambda: app.toggle_output_synapses(), "_Action synapses", section="Distal")
+    mode_manager.register(Mode.SYNAPSE, "p", lambda: app.toggle_proximal(), "_Proximal Visibility", section="Proximal")
+    mode_manager.register(Mode.SYNAPSE, "c", lambda: app.toggle_connected_proximal(), "_Connected proximal", section="Proximal")
+    mode_manager.register(Mode.SYNAPSE, "u", lambda: app.toggle_potential_proximal(), "_Unconnected proximal", section="Proximal")
+    mode_manager.register(Mode.SYNAPSE, "g", lambda: app.toggle_go_apical(), "_Go apical synapses", section="Apical")
+    mode_manager.register(Mode.SYNAPSE, "n", lambda: app.toggle_nogo_apical(), "_NoGo apical synapses", section="Apical")
 
     # --- PICK mode ---
-    mode_manager.register(Mode.PICK, "p", lambda: mode_manager.exit_to_normal(), "Back to normal")
+    mode_manager.register(Mode.PICK, "p", lambda: mode_manager.exit_to_normal(), "_Pick mode toggle")
     mode_manager.register(Mode.PICK, "x", lambda: app.clear_selection(), "Clear selection")
     mode_manager.register(Mode.PICK, "bracketleft", lambda: app.selection_back(), "Selection history back")
     mode_manager.register(Mode.PICK, "bracketright", lambda: app.selection_forward(), "Selection history forward")
 
     # --- CELL mode (_ marks mnemonic letter) ---
-    mode_manager.register(Mode.CELL, "c", lambda: mode_manager.exit_to_normal(), "Back to normal")
+    mode_manager.register(Mode.CELL, "c", lambda: mode_manager.exit_to_normal(), "_Cell mode toggle")
     mode_manager.register(Mode.CELL, "a", lambda: app.toggle_state_color("active"), "_Active cells")
     mode_manager.register(Mode.CELL, "p", lambda: app.toggle_state_color("predictive"), "_Predictive cells")
     mode_manager.register(Mode.CELL, "b", lambda: app.toggle_state_color("bursting"), "_Bursting cells")
     mode_manager.register(Mode.CELL, "w", lambda: app.toggle_state_color("winner"), "_Winner cells")
-    mode_manager.register(Mode.CELL, "k", lambda: app.toggle_state_color("correct_prediction"), "Correct prediction")
+    mode_manager.register(Mode.CELL, "y", lambda: app.toggle_state_color("correct_prediction"), "Correctl_y predicted")
     mode_manager.register(Mode.CELL, "g", lambda: app.toggle_state_color("go_depolarized"), "_Go depolarized")
     mode_manager.register(Mode.CELL, "n", lambda: app.toggle_state_color("nogo_depolarized"), "_NoGo depolarized")
-    # Segment section
-    mode_manager.register(Mode.CELL, "v", lambda: app.toggle_segments(), "Segment _visibility", section="Segments")
-    mode_manager.register(Mode.CELL, "s", lambda: app.toggle_segment_state_color("active"), "_Segment active", section="Segments")
-    mode_manager.register(Mode.CELL, "l", lambda: app.toggle_segment_state_color("learning"), "Segment _learning", section="Segments")
-    mode_manager.register(Mode.CELL, "m", lambda: app.toggle_segment_state_color("matching"), "Segment _matching", section="Segments")
-
     # Field visibility toggles (CELL mode, dynamic)
     _setup_field_key_bindings(mode_manager, app)
+
+    # --- SEGMENT mode ---
+    mode_manager.register(Mode.SEGMENT, "m", lambda: mode_manager.exit_to_normal(), "Seg_ment mode toggle")
+    mode_manager.register(Mode.SEGMENT, "v", lambda: app.toggle_segments(), "Segment _visibility")
+    mode_manager.register(Mode.SEGMENT, "a", lambda: app.toggle_segment_state_color("active"), "_Active segments")
+    mode_manager.register(Mode.SEGMENT, "l", lambda: app.toggle_segment_state_color("learning"), "_Learning segments")
+    mode_manager.register(Mode.SEGMENT, "s", lambda: app.toggle_segment_state_color("matching"), "Matching _segments")
 
     # --- Wire keys directly via a VTK observer with high priority ---
     # This fires BEFORE VTK's interactor style processes the key.
@@ -137,7 +146,7 @@ def setup_key_bindings(plotter, app, mode_manager: ModeManager):
 
 # Keys reserved in CELL mode (color toggles + mode switches + PyVista)
 _CELL_RESERVED = {
-    "a", "p", "b", "w", "k", "g", "n", "s", "l", "m", "v",  # Color + segment toggles
+    "a", "p", "b", "w", "y", "g", "n", "c",  # Cell color toggles + mode toggle
     "h",  # Global
 } | _PYVISTA_RESERVED
 

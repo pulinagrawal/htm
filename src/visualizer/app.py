@@ -528,6 +528,10 @@ class HTMVisualizer:
         self.brain_renderer.show_nogo_apical = not self.brain_renderer.show_nogo_apical
         self._update_display()
 
+    def toggle_output_synapses(self):
+        self.brain_renderer.show_output_synapses = not self.brain_renderer.show_output_synapses
+        self._update_display()
+
     def _get_synapse_state(self) -> dict:
         """Capture current synapse visibility flags."""
         return {
@@ -539,6 +543,7 @@ class HTMVisualizer:
             "potential": self.conn_renderer.show_potential_proximal,
             "go": self.brain_renderer.show_go_apical,
             "nogo": self.brain_renderer.show_nogo_apical,
+            "output": self.brain_renderer.show_output_synapses,
         }
 
     def _set_synapse_state(self, state: dict):
@@ -551,6 +556,7 @@ class HTMVisualizer:
         self.conn_renderer.show_potential_proximal = state["potential"]
         self.brain_renderer.show_go_apical = state["go"]
         self.brain_renderer.show_nogo_apical = state["nogo"]
+        self.brain_renderer.show_output_synapses = state.get("output", True)
 
     def toggle_all_synapses(self):
         """Toggle between last active synapse state and all off."""
@@ -568,6 +574,11 @@ class HTMVisualizer:
     def toggle_synapse_selection_only(self):
         """Toggle synapses to show only for selected elements."""
         self.brain_renderer.synapse_selection_only = not self.brain_renderer.synapse_selection_only
+        self._update_display()
+
+    def toggle_synapse_active_only(self):
+        """Toggle synapses to show only for active segments."""
+        self.brain_renderer.synapse_active_only = not self.brain_renderer.synapse_active_only
         self._update_display()
 
     def toggle_inactive(self):
@@ -643,9 +654,10 @@ class HTMVisualizer:
 
     # Mode entries shown in the top hint bar: (key, label, Mode)
     _MODE_HINTS = [
+        ("C", "Cell",    Mode.CELL),
+        ("M", "Segment", Mode.SEGMENT),
         ("S", "Synapse", Mode.SYNAPSE),
         ("P", "Pick",    Mode.PICK),
-        ("C", "Cell",    Mode.CELL),
     ]
 
     def _add_controls_text(self):

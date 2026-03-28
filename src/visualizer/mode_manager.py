@@ -13,6 +13,7 @@ class Mode(Enum):
     SYNAPSE = auto()
     PICK = auto()
     CELL = auto()
+    SEGMENT = auto()
 
 
 MODE_COLORS: dict[Mode, tuple[float, float, float]] = {
@@ -20,6 +21,7 @@ MODE_COLORS: dict[Mode, tuple[float, float, float]] = {
     Mode.SYNAPSE: (0.0, 0.9, 0.9),
     Mode.PICK:    (1.0, 0.9, 0.2),
     Mode.CELL:    (0.9, 0.3, 0.9),
+    Mode.SEGMENT: (0.3, 0.9, 0.5),
 }
 
 MODE_LABELS: dict[Mode, str] = {
@@ -27,6 +29,7 @@ MODE_LABELS: dict[Mode, str] = {
     Mode.SYNAPSE: "SYNAPSE",
     Mode.PICK:    "PICK",
     Mode.CELL:    "CELL",
+    Mode.SEGMENT: "SEGMENT",
 }
 
 

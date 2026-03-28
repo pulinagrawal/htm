@@ -71,11 +71,13 @@ class BrainRenderer:
         self._cell_id_to_pos: dict[int, np.ndarray] = {}
         self.show_synapses = True
         self.synapse_selection_only = False
+        self.synapse_active_only = False
         self.show_outgoing_synapses = True
         self.show_incoming_synapses = True
         self.show_segments = True
         self.show_go_apical = True
         self.show_nogo_apical = True
+        self.show_output_synapses = True
         self.hidden_fields: set[str] = set()
         self.hidden_states: set[str] = set()  # Cell states whose coloring is disabled
         self.hidden_segment_states: set[str] = set()  # Segment states whose coloring is disabled
@@ -244,6 +246,7 @@ class BrainRenderer:
             layout = self.layouts[name]
             color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
             self._render_input_field(plotter, name, field, layout, color)
+            self._render_output_synapses(plotter, name, field, layout)
 
         for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
@@ -382,12 +385,15 @@ class BrainRenderer:
                         seg_colors.append(segment_color(seg, self.hidden_segment_states))
 
                         if self.show_synapses and not self.synapse_selection_only:
-                            for syn in seg.synapses:
-                                src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
-                                if src_pos is not None:
-                                    syn_starts.append(seg_pos)
-                                    syn_ends.append(src_pos)
-                                    syn_colors.append(permanence_color(syn.permanence))
+                            if self.synapse_active_only and not (seg.active or seg.learning or seg.matching):
+                                pass  # skip inactive segment synapses
+                            else:
+                                for syn in seg.synapses:
+                                    src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
+                                    if src_pos is not None:
+                                        syn_starts.append(seg_pos)
+                                        syn_ends.append(src_pos)
+                                        syn_colors.append(permanence_color(syn.permanence))
 
                 # Apical segments (Go + NoGo)
                 apical_segs = getattr(cell, 'apical_segments', [])
@@ -408,7 +414,11 @@ class BrainRenderer:
                         apical_seg_positions.append(aseg_pos)
                         apical_seg_colors.append(apical_segment_color(aseg))
 
-                        if self.show_synapses and not self.synapse_selection_only:
+                        if self.synapse_selection_only:
+                            pass  # skip global apical synapses when selection-only
+                        elif self.synapse_active_only and not (aseg.active or aseg.learning):
+                            pass  # skip inactive apical segment synapses
+                        else:
                             for syn in aseg.synapses:
                                 src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
                                 if src_pos is not None:
@@ -451,6 +461,44 @@ class BrainRenderer:
         else:
             self._add_empty_mesh(plotter, f"apical_synapses_{name}")
 
+    def _render_output_synapses(self, plotter, name, field, layout):
+        """Render learnable output synapses from OutputField cells to source field cells."""
+        # OutputField is identified by having an input_field attribute;
+        # each output cell stores its output segment as cell.distal_segments[0]
+        if not hasattr(field, 'input_field'):
+            self._add_empty_mesh(plotter, f"output_synapses_{name}")
+            return
+
+        if not self.show_output_synapses or self.synapse_selection_only:
+            self._add_empty_mesh(plotter, f"output_synapses_{name}")
+            return
+
+        syn_starts = []
+        syn_ends = []
+        syn_colors = []
+
+        for ci, cell in enumerate(field.cells):
+            if not cell.distal_segments:
+                continue
+            seg = cell.distal_segments[0]
+            cell_pos = layout.cell_positions.get((ci, 0))
+            if cell_pos is None:
+                continue
+            for syn in seg.synapses:
+                src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
+                if src_pos is not None:
+                    syn_starts.append(cell_pos)
+                    syn_ends.append(src_pos)
+                    syn_colors.append(permanence_color(syn.permanence))
+
+        if syn_starts:
+            self._draw_lines(
+                plotter, np.array(syn_starts), np.array(syn_ends),
+                np.array(syn_colors, dtype=np.uint8), f"output_synapses_{name}",
+            )
+        else:
+            self._add_empty_mesh(plotter, f"output_synapses_{name}")
+
     # ------------------------------------------------------------------
     # Update methods
     # ------------------------------------------------------------------
@@ -465,6 +513,7 @@ class BrainRenderer:
             # Handle hidden fields
             if not self.is_field_visible(name):
                 self._add_empty_mesh(plotter, f"input_{name}")
+                self._add_empty_mesh(plotter, f"output_synapses_{name}")
                 continue
 
             base_color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
@@ -505,6 +554,9 @@ class BrainRenderer:
             else:
                 self._add_empty_mesh(plotter, f"input_{name}")
 
+            # Render output synapses for OutputField instances
+            self._render_output_synapses(plotter, name, field, layout)
+
         for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
             # Handle hidden fields
@@ -528,6 +580,7 @@ class BrainRenderer:
             # Handle hidden fields
             if not self.is_field_visible(name):
                 self._add_empty_mesh(plotter, f"input_{name}")
+                self._add_empty_mesh(plotter, f"output_synapses_{name}")
                 continue
 
             base_color = INPUT_FIELD_COLORS[i % len(INPUT_FIELD_COLORS)]
@@ -564,16 +617,19 @@ class BrainRenderer:
             else:
                 self._add_empty_mesh(plotter, f"input_{name}")
 
+            # Render output synapses for OutputField instances
+            self._render_output_synapses(plotter, name, field, layout)
+
         for name, field in self.brain.all_column_fields.items():
             layout = self.layouts[name]
-            
+
             # Handle hidden fields
             if not self.is_field_visible(name):
                 self._add_empty_mesh(plotter, f"cells_{name}")
                 self._add_empty_mesh(plotter, f"segments_{name}")
                 self._add_empty_mesh(plotter, f"synapses_{name}")
                 continue
-                
+
             active_set = set(snapshot.column_active_cells.get(name, []))
             winner_set = set(snapshot.column_winner_cells.get(name, []))
             pred_set = set(snapshot.column_predictive_cells.get(name, []))
@@ -732,6 +788,34 @@ class BrainRenderer:
                                 syn_starts.append(aseg_pos)
                                 syn_ends.append(src_pos)
                                 syn_colors.append(syn_color)
+
+        # Walk OutputField output synapses for selected output/source cells
+        for name, field in self.brain.all_input_fields.items():
+            if not hasattr(field, 'input_field'):
+                continue
+            layout = self.layouts[name]
+            for ci, cell in enumerate(field.cells):
+                if not cell.distal_segments:
+                    continue
+                seg = cell.distal_segments[0]
+                cell_pos = layout.cell_positions.get((ci, 0))
+                if cell_pos is None:
+                    continue
+                cell_is_selected = id(cell) in selected_cell_ids
+                for syn in seg.synapses:
+                    src_pos = self._cell_id_to_pos.get(id(syn.source_cell))
+                    if src_pos is None:
+                        continue
+                    source_is_selected = id(syn.source_cell) in selected_cell_ids
+                    syn_color = permanence_color(syn.permanence)
+                    if cell_is_selected and self.show_incoming_synapses:
+                        syn_starts.append(cell_pos)
+                        syn_ends.append(src_pos)
+                        syn_colors.append(syn_color)
+                    elif source_is_selected and self.show_outgoing_synapses:
+                        syn_starts.append(cell_pos)
+                        syn_ends.append(src_pos)
+                        syn_colors.append(syn_color)
 
         if syn_starts:
             self._draw_lines(
