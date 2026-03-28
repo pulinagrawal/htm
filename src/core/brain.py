@@ -85,9 +85,8 @@ class Brain:
 
     def activate_apical_segments(self) -> None:
         """Activate apical segments in Go/NoGo fields based on current column states."""
-        for field in self.fields:
-            if isinstance(self.fields[field], ColumnField):
-                self.fields[field].apical_compute()
+        for field in self._column_fields.values():
+            field.apical_compute()
     
     def generate_behavior(self) -> dict[str, Any]:
         """Compute output fields and return decoded values.
