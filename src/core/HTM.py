@@ -964,14 +964,11 @@ class OutputField(InputField):
         self.connected_perm = connected_perm
         self.decode_confidence_threshold = max(0.0, min(1.0, decode_confidence_threshold))
         self.random_action_picker = random_action_picker
-        self._output_synapses: dict[Cell, Segment] = {}
-
         for cell in self.cells:
             cell.distal_field = self.input_field
             segment = Segment(parent_cell=cell, field=self.input_field)
             segment.max_synapses = len(self.input_field.cells)
-            segment.grow(strength=2.0, growth_candidates=set(self.input_field.cells))
-            self._output_synapses[cell] = segment
+            cell.distal_segments = [segment]
 
     def _connected_go_count(self, segment: Segment) -> int:
         return sum(
@@ -989,9 +986,9 @@ class OutputField(InputField):
 
     def _activate_cells_from_action(self, action: Any) -> None:
         encoded_bits = self.encoder.encode(action)
-        for cell in self.cells:
-            cell.active = False
+        # TODO Could optimize by directly activating cells without encoding the full vector first
         for idx, cell in enumerate(self.cells):
+            cell.active = False
             if encoded_bits[idx]:
                 cell.set_active()
 
@@ -1024,12 +1021,12 @@ class OutputField(InputField):
     def learn(self) -> None:
         growth_targets = set(
             cell for cell in self.input_field.cells
-            if cell.active or cell.go_depolarized or cell.nogo_depolarized
+            if cell.go_depolarized or cell.nogo_depolarized
         )
         for cell in self.cells:
             if cell.prev_active:
-                segment = self._output_synapses[cell]
-                segment.adapt(active_predicate=lambda syn: syn.source_cell.active or syn.source_cell.go_depolarized or syn.source_cell.nogo_depolarized)
+                segment = cell.distal_segments[0]
+                segment.adapt(active_predicate=lambda syn: syn.source_cell.go_depolarized or syn.source_cell.nogo_depolarized)
                 if growth_targets:
                     segment.grow(growth_candidates=growth_targets)
 
@@ -1060,7 +1057,7 @@ class OutputField(InputField):
         source_cell_count = max(1, len(self.input_field.cells))
         probabilities: List[float] = []
         for cell in self.cells:
-            segment = self._output_synapses[cell]
+            segment = cell.distal_segments[0]
             connected_go = self._connected_go_count(segment)
             connected_nogo = self._connected_nogo_count(segment)
             go_mod = self.go_gain * (connected_go / source_cell_count)
