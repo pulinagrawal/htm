@@ -46,6 +46,7 @@ class HTMVisualizer:
         self.history = History(max_size=1000)
         self.show_proximal = False
         self.learn = True
+        self._external_mode = False  # True when start() is used instead of run()
 
         # Multi-selection list
         self._selections: list[dict] = []
@@ -121,6 +122,90 @@ class HTMVisualizer:
         self._reset_camera()
         self._capture_snapshot({})
         self.plotter.show()
+
+    def start(self):
+        """Set up the plotter window for externally-driven stepping.
+
+        Use this instead of run() when an external loop drives stepping.
+        Call update(inputs) after each brain step — it will block until
+        the user advances via RIGHT arrow or auto-play (SPACE).
+        Call close() when done.
+        """
+        import time as _time
+        self._time = _time
+
+        pv.global_theme.background = "black"
+        pv.global_theme.font.color = "white"
+
+        self.plotter = pv.Plotter(title=self.title, window_size=(1600, 900))
+        self.plotter.set_background(pv.global_theme.background)
+        self.plotter.enable_anti_aliasing("ssaa")
+
+        self.plotter.iren.interactor.GetRenderWindow().SetStereoRender(False)
+        self.plotter.iren.interactor.GetRenderWindow().SetStereoType(0)
+
+        style = self.plotter.iren.interactor.GetInteractorStyle()
+        if style:
+            style.PickingManagedOff()
+
+        self.brain_renderer.render_initial(self.plotter)
+
+        self._external_mode = True
+        self._step_requested = False
+
+        def _gate_step():
+            self._step_requested = True
+
+        self.playback = PlaybackController(
+            step_callback=_gate_step,
+            update_callback=lambda: None,
+        )
+        self.playback.step_back = self._step_back_history
+        setup_key_bindings(self.plotter, self, self.mode_manager)
+
+        self.plotter.iren.track_click_position(
+            callback=self._on_click, side="left",
+        )
+
+        self._add_controls_text()
+        self._add_stats_overlay()
+        self._add_selection_overlay()
+        self._add_widgets()
+
+        self._reset_camera()
+        self._capture_snapshot({})
+        self.plotter.show(interactive_update=True)
+
+        # Hook into brain.step() so update() fires automatically
+        self.brain._post_step_hooks.append(self._on_brain_step)
+
+    def _on_brain_step(self, brain, inputs: dict[str, Any], rewards: dict[str, Any], actions: dict[str, Any]):
+        """Post-step hook — adapts the Brain callback signature to update()."""
+        self.update(inputs)
+
+    def update(self, inputs: dict[str, Any], predictions: dict | None = None):
+        """Capture brain state, refresh display, then block until user advances.
+
+        Call this from an external loop after each brain step.
+        Blocks until the user presses RIGHT or auto-play timer fires.
+        """
+        if self.plotter is None:
+            return
+        self.timestep += 1
+        self._track_metrics(inputs, predictions or {})
+        self._capture_snapshot(inputs, predictions)
+        self._update_display()
+
+        # Wait for user to advance (RIGHT key or auto-play timer)
+        self._step_requested = False
+        while not self._step_requested:
+            self.plotter.update()          # process VTK events (keys, timers)
+            self._time.sleep(0.016)        # ~60 fps, avoid busy-spin
+
+    def close(self):
+        """Close the plotter window."""
+        if self.plotter is not None:
+            self.plotter.close()
 
     # ------------------------------------------------------------------
     # Stepping
@@ -335,7 +420,7 @@ class HTMVisualizer:
 
     def _update_selection_overlay(self):
         if not self._selections:
-            text = "P for Pick mode | Click to pick | Shift+Click: multi"
+            text = ""
         elif len(self._selections) == 1:
             text = self._format_selection(self._selections[0])
         else:
@@ -477,6 +562,10 @@ class HTMVisualizer:
         self.playback.toggle_play(self.plotter)
 
     def step_forward(self):
+        # In start() mode, just release the gate — external loop does the stepping
+        if self._external_mode:
+            self._step_requested = True
+            return
         # First try to step forward in history if we've stepped back
         if self.history.can_step_forward:
             self._step_forward_history()

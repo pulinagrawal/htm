@@ -4,10 +4,13 @@ Encapsulates InputFields and ColumnFields to provide a unified API
 for encoding inputs and computing temporal memory in a single step.
 """
 
-from typing import Any
+from typing import Any, Callable
 
 from core.HTM import ColumnField, InputField, Field, OutputField
 from core.sungur import ValueField
+
+# Hook signature: (brain, inputs, rewards, behaviors) -> None
+PostStepHook = Callable[["Brain", dict[str, Any], dict[str, Any], dict[str, Any]], None]
 
 
 class Brain:
@@ -38,6 +41,7 @@ class Brain:
         self._column_fields: dict[str, ColumnField] = {k:v for k,v in fields.items() if isinstance(v, ColumnField)
                                                         and not isinstance(v, ValueField)}
         self.fields = fields
+        self._post_step_hooks: list[PostStepHook] = []
 
         # Combined dicts for rendering — all fields that share the same visual shape
         self.all_column_fields: dict[str, ColumnField] = {
@@ -75,8 +79,11 @@ class Brain:
             reward = inputs['reward']
         self.estimate_value(reward)
         self.activate_apical_segments()
-        return self.generate_behavior()
-    
+        actions = self.generate_behavior()
+        for hook in self._post_step_hooks:
+            hook(self, inputs, {'reward': reward}, actions)
+        return actions
+
     def estimate_value(self, reward: float | None = None) -> None:
         for name, field in self._value_fields.items():
             if reward is None:

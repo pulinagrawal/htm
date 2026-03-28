@@ -153,47 +153,15 @@ def run_episode(agent: GymBrain, env: gym.Env, learn: bool = True) -> tuple[floa
 
     return total_reward, MAX_STEPS_PER_EPISODE
 
-def step_fn(env: gym.Env, action: int, timestep: int) -> int:
-    """Step function for ClusterTracker input snapshots (legacy helper)."""
-    obs, reward, terminated, truncated, _ = env.step(action)
-    stimulus = obs_to_inputs(obs)
-    stimulus["reward"] = reward
-    return stimulus
 
-def main_viz() -> None:
-    """Launch the HTM visualizer with the FrozenLake agent."""
-    from visualizer.app import HTMVisualizer
-
-    env = gym.make(ENV_NAME, is_slippery=False, render_mode="human", reward_schedule=(100, -10, -1))
+def main(viz: bool = False) -> None:
+    env = gym.make(ENV_NAME, is_slippery=False, render_mode="human",
+                   reward_schedule=(100, -30, -1))
     agent = build_agent()
 
-    # Mutable state for the env-brain interaction loop
-    state: dict[str, Any] = {"obs": None, "reward": 0.0, "done": True}
-
-    def agent_step(timestep: int) -> dict[str, Any]:
-        if state["done"]:
-            state["obs"], _ = env.reset()
-            state["reward"] = 0.0
-            state["done"] = False
-
-        obs = state["obs"]
-        inputs = obs_to_inputs(obs)
-        action = agent.step(obs, reward=state["reward"], learn=True)
-
-        next_obs, reward, terminated, truncated, _ = env.step(action)
-        state["obs"] = next_obs
-        state["reward"] = float(reward)
-        state["done"] = terminated or truncated
-
-        return inputs
-
-    viz = HTMVisualizer(agent.brain, agent_step_fn=agent_step, title="FrozenLake HTM")
-    viz.run()
-
-
-def main() -> None:
-    env = gym.make(ENV_NAME, is_slippery=False, render_mode="human", reward_schedule=(100,-10,-1))
-    agent = build_agent()
+    if viz:
+        from visualizer.app import HTMVisualizer
+        HTMVisualizer(agent.brain, title="FrozenLake HTM").start()
 
     wins = 0
     recent_wins = 0
@@ -229,7 +197,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if "--viz" in sys.argv:
-        main_viz()
-    else:
-        main()
+    main(viz=True or "--viz" in sys.argv)
