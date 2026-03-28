@@ -13,6 +13,7 @@ from .colors import (
     COLORS, INPUT_FIELD_COLORS, SEGMENT_COLORS, APICAL_SEGMENT_COLORS,
     color_to_float, state_color, segment_color, apical_segment_color,
     permanence_color, probability_color, LABEL_COLOR,
+    cell_active_states, cell_active_states_from_sets,
 )
 
 # Note: Incoming synapses = synapses feeding INTO a selected segment from source cells
@@ -286,6 +287,7 @@ class BrainRenderer:
         # If field is hidden, render empty meshes
         if not self.is_field_visible(name):
             self._add_empty_mesh(plotter, f"cells_{name}")
+            self._add_empty_mesh(plotter, f"wedged_cells_{name}")
             self._add_empty_mesh(plotter, f"segments_{name}")
             self._add_empty_mesh(plotter, f"synapses_{name}")
             self._add_empty_mesh(plotter, f"apical_segments_{name}")
@@ -323,24 +325,32 @@ class BrainRenderer:
             )
 
     def _render_cells(self, plotter, name, field, layout):
-        positions = []
-        colors = []
+        single_positions = []
+        single_colors = []
+        wedged_cells = []
         for ci, col in enumerate(field.columns):
             for ji, cell in enumerate(col.cells):
-                # Skip inactive cells if hide_inactive is enabled
                 if self.hide_inactive:
                     is_active = cell.active or cell.predictive or cell.winner or col.bursting
                     if not is_active:
                         continue
-                positions.append(layout.cell_positions[(ci, ji)])
-                colors.append(state_color(cell, col, self.hidden_states))
-        if positions:
+                pos = layout.cell_positions[(ci, ji)]
+                states = cell_active_states(cell, col, self.hidden_states)
+                if len(states) <= 1:
+                    single_positions.append(pos)
+                    single_colors.append(states[0][1])
+                else:
+                    wedged_cells.append((pos, [s[1] for s in states]))
+        if single_positions:
             self._add_sphere_glyph(
-                plotter, np.array(positions), np.array(colors, dtype=np.uint8),
+                plotter, np.array(single_positions),
+                np.array(single_colors, dtype=np.uint8),
                 CELL_RADIUS, f"cells_{name}",
             )
         else:
             self._add_empty_mesh(plotter, f"cells_{name}")
+        self._add_wedged_cells(plotter, wedged_cells, CELL_RADIUS,
+                               f"wedged_cells_{name}")
 
     def _render_segments_and_synapses(self, plotter, name, field, layout):
         # If segments are globally hidden, clear all segment/synapse actors
@@ -562,6 +572,7 @@ class BrainRenderer:
             # Handle hidden fields
             if not self.is_field_visible(name):
                 self._add_empty_mesh(plotter, f"cells_{name}")
+                self._add_empty_mesh(plotter, f"wedged_cells_{name}")
                 self._add_empty_mesh(plotter, f"segments_{name}")
                 self._add_empty_mesh(plotter, f"synapses_{name}")
                 self._add_empty_mesh(plotter, f"apical_segments_{name}")
@@ -626,6 +637,7 @@ class BrainRenderer:
             # Handle hidden fields
             if not self.is_field_visible(name):
                 self._add_empty_mesh(plotter, f"cells_{name}")
+                self._add_empty_mesh(plotter, f"wedged_cells_{name}")
                 self._add_empty_mesh(plotter, f"segments_{name}")
                 self._add_empty_mesh(plotter, f"synapses_{name}")
                 continue
@@ -637,47 +649,39 @@ class BrainRenderer:
             go_set = set(snapshot.column_go_cells.get(name, []))
             nogo_set = set(snapshot.column_nogo_cells.get(name, []))
 
-            positions = []
-            colors = []
+            single_positions = []
+            single_colors = []
+            wedged_cells = []
             for ci, col in enumerate(field.columns):
                 for ji in range(len(col.cells)):
                     key = (ci, ji)
-                    # Check if cell is active in any state
                     is_active = (
                         key in active_set or key in pred_set or
                         key in winner_set or ci in burst_set or
                         key in go_set or key in nogo_set
                     )
-                    # Skip inactive cells if hide_inactive is enabled
                     if self.hide_inactive and not is_active:
                         continue
-                    positions.append(layout.cell_positions[(ci, ji)])
-                    # Apply color based on state priority, respecting hidden_states
-                    if ci in burst_set and key in active_set and "bursting" not in self.hidden_states:
-                        color = COLORS["bursting"]
-                    elif key in pred_set and key in active_set and "correct_prediction" not in self.hidden_states:
-                        color = COLORS["correct_prediction"]
-                    elif key in pred_set and "predictive" not in self.hidden_states:
-                        color = COLORS["predictive"]
-                    elif key in go_set and "go_depolarized" not in self.hidden_states:
-                        color = COLORS["go_depolarized"]
-                    elif key in nogo_set and "nogo_depolarized" not in self.hidden_states:
-                        color = COLORS["nogo_depolarized"]
-                    elif key in winner_set and "winner" not in self.hidden_states:
-                        color = COLORS["winner"]
-                    elif key in active_set and "active" not in self.hidden_states:
-                        color = COLORS["active"]
+                    pos = layout.cell_positions[(ci, ji)]
+                    states = cell_active_states_from_sets(
+                        key, ci, active_set, winner_set, pred_set,
+                        burst_set, go_set, nogo_set, self.hidden_states,
+                    )
+                    if len(states) <= 1:
+                        single_positions.append(pos)
+                        single_colors.append(states[0][1])
                     else:
-                        color = COLORS["inactive"]
-                    colors.append(color)
-            if positions:
+                        wedged_cells.append((pos, [s[1] for s in states]))
+            if single_positions:
                 self._add_sphere_glyph(
-                    plotter, np.array(positions),
-                    np.array(colors, dtype=np.uint8),
+                    plotter, np.array(single_positions),
+                    np.array(single_colors, dtype=np.uint8),
                     CELL_RADIUS, f"cells_{name}",
                 )
             else:
                 self._add_empty_mesh(plotter, f"cells_{name}")
+            self._add_wedged_cells(plotter, wedged_cells, CELL_RADIUS,
+                                   f"wedged_cells_{name}")
             self._render_segments_and_synapses(plotter, name, field, layout)
 
     # ------------------------------------------------------------------
@@ -959,6 +963,58 @@ class BrainRenderer:
     # ------------------------------------------------------------------
     # Low-level helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _create_wedged_sphere(position: np.ndarray, radius: float,
+                              state_colors: list[tuple]) -> pv.PolyData:
+        """Create a sphere with per-face coloring divided into equal wedges.
+
+        Each state gets an equal angular slice. Face color is determined by
+        the azimuthal angle of its center relative to the sphere origin.
+        """
+        sphere = pv.Sphere(radius=radius, center=position,
+                           theta_resolution=8, phi_resolution=8)
+        centers = sphere.cell_centers().points
+        # Azimuthal angle of each face center relative to sphere center
+        local = centers - position
+        angles = np.arctan2(local[:, 1], local[:, 0])  # [-pi, pi]
+
+        n_states = len(state_colors)
+        n_faces = sphere.n_cells
+        face_colors = np.empty((n_faces, 3), dtype=np.uint8)
+
+        wedge_size = 2 * np.pi / n_states
+        for fi in range(n_faces):
+            # Shift angle to [0, 2pi] then find wedge index
+            a = (angles[fi] + np.pi) % (2 * np.pi)
+            idx = min(int(a / wedge_size), n_states - 1)
+            face_colors[fi] = state_colors[idx]
+
+        sphere.cell_data["colors"] = face_colors
+        return sphere
+
+    def _add_wedged_cells(self, plotter, wedged_cells: list, radius: float,
+                          actor_name: str):
+        """Render multi-state cells as wedged spheres.
+
+        Args:
+            wedged_cells: List of (position, state_colors) where state_colors
+                          is [(r,g,b), ...] with len >= 2.
+        """
+        if not wedged_cells:
+            self._add_empty_mesh(plotter, actor_name)
+            return
+
+        meshes = []
+        for position, state_colors in wedged_cells:
+            meshes.append(self._create_wedged_sphere(position, radius, state_colors))
+
+        combined = meshes[0] if len(meshes) == 1 else meshes[0].merge(meshes[1:])
+        plotter.add_mesh(
+            combined, scalars="colors", rgb=True,
+            show_scalar_bar=False, name=actor_name, pickable=True,
+            preference="cell",
+        )
 
     def _add_sphere_glyph(self, plotter, points, colors, radius, actor_name):
         cloud = pv.PolyData(points)

@@ -132,6 +132,72 @@ def state_color(cell, column=None, hidden_states: set | None = None) -> tuple:
     return COLORS["inactive"]
 
 
+def cell_active_states(cell, column=None, hidden_states: set | None = None) -> list[tuple[str, tuple]]:
+    """Return ALL active states on a cell as [(state_name, color), ...].
+
+    Unlike state_color() which returns only the highest-priority state,
+    this collects every active state for wedge-based rendering.
+    Respects hidden_states — hidden states are excluded.
+    Falls back to [("inactive", COLORS["inactive"])] if none active.
+    """
+    hidden = hidden_states or set()
+    states = []
+
+    if column and column.bursting and cell.active and "bursting" not in hidden:
+        states.append(("bursting", COLORS["bursting"]))
+    if cell.predictive and cell.prev_predictive and cell.active and "correct_prediction" not in hidden:
+        states.append(("correct_prediction", COLORS["correct_prediction"]))
+    if cell.predictive and "predictive" not in hidden:
+        states.append(("predictive", COLORS["predictive"]))
+    if hasattr(cell, 'go_depolarized') and cell.go_depolarized and "go_depolarized" not in hidden:
+        states.append(("go_depolarized", COLORS["go_depolarized"]))
+    if hasattr(cell, 'nogo_depolarized') and cell.nogo_depolarized and "nogo_depolarized" not in hidden:
+        states.append(("nogo_depolarized", COLORS["nogo_depolarized"]))
+    if cell.winner and "winner" not in hidden:
+        states.append(("winner", COLORS["winner"]))
+    if cell.active and "active" not in hidden:
+        states.append(("active", COLORS["active"]))
+
+    return states if states else [("inactive", COLORS["inactive"])]
+
+
+def cell_active_states_from_sets(
+    key: tuple[int, int],
+    col_idx: int,
+    active_set: set,
+    winner_set: set,
+    pred_set: set,
+    burst_set: set,
+    go_set: set,
+    nogo_set: set,
+    hidden_states: set | None = None,
+) -> list[tuple[str, tuple]]:
+    """Return ALL active states for a cell using set-based lookups (snapshot path).
+
+    Same logic as cell_active_states() but works with precomputed sets
+    instead of cell objects.
+    """
+    hidden = hidden_states or set()
+    states = []
+
+    if col_idx in burst_set and key in active_set and "bursting" not in hidden:
+        states.append(("bursting", COLORS["bursting"]))
+    if key in pred_set and key in active_set and "correct_prediction" not in hidden:
+        states.append(("correct_prediction", COLORS["correct_prediction"]))
+    if key in pred_set and "predictive" not in hidden:
+        states.append(("predictive", COLORS["predictive"]))
+    if key in go_set and "go_depolarized" not in hidden:
+        states.append(("go_depolarized", COLORS["go_depolarized"]))
+    if key in nogo_set and "nogo_depolarized" not in hidden:
+        states.append(("nogo_depolarized", COLORS["nogo_depolarized"]))
+    if key in winner_set and "winner" not in hidden:
+        states.append(("winner", COLORS["winner"]))
+    if key in active_set and "active" not in hidden:
+        states.append(("active", COLORS["active"]))
+
+    return states if states else [("inactive", COLORS["inactive"])]
+
+
 def segment_color(segment, hidden_states: set | None = None) -> tuple:
     """Determine segment color based on state.
 
