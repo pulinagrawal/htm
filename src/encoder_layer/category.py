@@ -8,11 +8,11 @@ a distinct, non-overlapping sparse distributed representation.
 from __future__ import annotations
 
 import copy
+import random
 from dataclasses import dataclass, field
 from typing import Any, Iterable, override
 
 from encoder_layer.base_encoder import BaseEncoder, ParameterMarker
-from encoder_layer.rdse import RandomDistributedScalarEncoder, RDSEParameters
 from log.log import get_logger, logger
 
 
@@ -23,9 +23,8 @@ class CategoryEncoderNew(BaseEncoder[str]):
     where each category maps to a distinct, non-overlapping pattern. Unlike scalar
     encoders, there is no similarity between different categories' representations.
 
-    The encoder reserves index 0 for unknown categories not in the category list.
-    Internally, it uses either a ScalarEncoder or RandomDistributedScalarEncoder
-    with appropriate parameters to ensure non-overlapping encodings.
+    Encodings are pre-computed at initialization using random non-overlapping
+    bit allocations, guaranteeing that no two categories share any active bits.
 
     Args:
         parameters: Configuration specifying categories and encoder settings.
@@ -33,60 +32,70 @@ class CategoryEncoderNew(BaseEncoder[str]):
 
     def __init__(self, parameters: CategoryParametersNew):
         self._parameters = copy.deepcopy(parameters)
-        # self._w = self._parameters.w
-        self._category_list = self._parameters.category_list
-        self._RDSEused = self._parameters.rdse_used
-        self._num_categories = len(self._category_list) + 1
-        if self._parameters.size == 0:
-            self.size = self._num_categories * self._w
-        else:
-            self.size = self._parameters.size
+        self._category_list = list(self._parameters.category_list)
+        self._num_categories = len(self._category_list)
+        self._new_categories_allowed = self._parameters.new_categories_allowed
+
+        self.size = self._parameters.size
+
         if self._parameters.sparsity != 0:
-            self.sparsity = self._parameters.sparsity
-            self.active_bits_per_category = 0
+            self._active_bits = int(round(self.size * self._parameters.sparsity))
         else:
-            self.sparsity = 0
-            self.active_bits_per_category = self._parameters.active_bits_per_category
+            self._active_bits = self._parameters.active_bits_per_category
+
+        if self._active_bits <= 0:
+            raise ValueError("active_bits must be positive (set sparsity or active_bits_per_category)")
+
+        required_bits = (self._num_categories + 1) * self._active_bits
+        if required_bits > self.size:
+            raise ValueError(
+                f"Not enough bits ({self.size}) for {self._num_categories + 1} categories "
+                f"with {self._active_bits} active bits each (need {required_bits})"
+            )
+
+        self._max_categories = self.size // self._active_bits - 1  # minus 1 for unknown slot
+
         self.logger = get_logger(self)
         self._encoding_cache: dict[str, list[int]] = {}
 
+        self._category_encodings: dict[str | None, list[int]] = {}
+        self._precompute_encodings(self._parameters.seed)
+
         super().__init__(self._size)
-        # Configure RDSE for random distributed encoding
-        if self._RDSEused:
-            print("Active bits: ", self.active_bits_per_category)
-            print("Sparsity: ", self.sparsity)
-            self.rdsep = RDSEParameters(
-                size=self.size,
-                active_bits=self.active_bits_per_category,
-                sparsity=self.sparsity,
-                radius=1.0,
-                resolution=0.0,
-                category=False,
-                seed=0,
-            )
-            self.encoder = RandomDistributedScalarEncoder(self.rdsep)
-        # Configure standard ScalarEncoder for deterministic encoding
-        else:
-            self.sp = ScalarEncoderParameters(
-                minimum=0,
-                maximum=1000,
-                clip_input=False,
-                periodic=False,
-                category=False,
-                active_bits=self.active_bits_per_category,
-                sparsity=self.sparsity,
-                size=self.size,
-                radius=1.0,
-                resolution=0.0,
-            )
-            self.encoder = ScalarEncoder(self.sp)
+
+    def _precompute_encodings(self, seed: int) -> None:
+        """Pre-compute guaranteed non-overlapping encodings for all known categories."""
+        rng = random.Random(seed)
+        self._shuffled_bits = list(range(self.size))
+        rng.shuffle(self._shuffled_bits)
+        self._next_slot = 0
+
+        # Slot 0: unknown/unrecognized categories
+        self._category_encodings[None] = self._allocate_slot()
+
+        # Slots 1..N: known categories
+        for category in self._category_list:
+            self._category_encodings[category] = self._allocate_slot()
+
+    def _allocate_slot(self) -> list[int]:
+        """Allocate the next non-overlapping bit block and return the encoding."""
+        start = self._next_slot * self._active_bits
+        positions = set(self._shuffled_bits[start:start + self._active_bits])
+        self._next_slot += 1
+        return [1 if i in positions else 0 for i in range(self.size)]
+
+    @property
+    def active_bits(self) -> int:
+        """Number of active bits per category."""
+        return self._active_bits
 
     @override
     def encode(self, input_value: Any) -> list[int]:
         """Encode a category string into a sparse distributed representation.
 
-        Maps the input category to its index in the category list (or 0 for
-        unknown categories) and delegates to the underlying encoder.
+        When new_categories_allowed=True and the category is unseen, a new
+        unique encoding is allocated if capacity remains. Otherwise falls back
+        to the unknown encoding.
 
         Args:
             input_value: Category string to encode.
@@ -94,16 +103,19 @@ class CategoryEncoderNew(BaseEncoder[str]):
         Returns:
             Binary list of 0s and 1s representing the SDR.
         """
-        if input_value not in self._category_list:
-            # Assign a unique index for each unknown input_value
-            # Use a hash to map unknowns to a unique, reproducible index outside the known range
-            # Avoid collisions with known indices (1..len(category_list)), and avoid 0
-            # Use abs(hash(input_value)) % 900000 + len(self._category_list) + 1
-            index = abs(hash(input_value)) % 900000 + len(self._category_list) + 1
-        else:
-            index = self._category_list.index(input_value) + 1
+        if input_value not in self._category_encodings:
+            if self._new_categories_allowed and len(self._category_encodings) - 1 < self._max_categories:
+                self._category_encodings[input_value] = self._allocate_slot()
+                self._category_list.append(input_value)
+                self.logger.info("Expanded category encoding for: %s", input_value)
+            else:
+                sdr = list(self._category_encodings[None])
+                self.logger.info("Category encoded as unknown: %s", input_value)
+                self._encoding_cache[input_value] = sdr
+                return sdr
+
+        sdr = list(self._category_encodings[input_value])
         self.logger.info("Category encoded value: %s", input_value)
-        sdr = self.encoder.encode(int(index))
         self._encoding_cache[input_value] = sdr
         return sdr
 
@@ -122,7 +134,6 @@ class CategoryEncoderNew(BaseEncoder[str]):
     def clear_registered_encodings(self) -> None:
         """Clear cached category encodings."""
         self._encoding_cache.clear()
-        self.encoder.clear_registered_encodings()
 
     # TODO add candidates to this method
     @override
@@ -166,9 +177,6 @@ class CategoryEncoderNew(BaseEncoder[str]):
     def check_parameters(self, parameters: CategoryParametersNew) -> CategoryParametersNew:
         """Validate category encoder parameters.
 
-        Performs basic sanity checks on the configuration to ensure proper
-        encoder operation.
-
         Args:
             parameters: The category parameters to validate.
 
@@ -176,11 +184,8 @@ class CategoryEncoderNew(BaseEncoder[str]):
             The validated parameters object.
 
         Raises:
-            ValueError: If w is non-positive, category_list is empty, or
-                category_list contains duplicates.
+            ValueError: If category_list is empty or contains duplicates.
         """
-        if parameters.w <= 0:
-            raise ValueError("Parameter 'w' must be positive.")
         if not parameters.category_list:
             raise ValueError("category_list cannot be empty.")
         if len(set(parameters.category_list)) != len(parameters.category_list):
@@ -197,8 +202,10 @@ class CategoryParametersNew:
         sparsity: the percent of sdr that is active bits.
         size: the size of the sdr.
         category_list: List of valid category strings to encode. Must be unique.
-        rdse_used: If True, use RandomDistributedScalarEncoder for encoding;
-            if False, use standard ScalarEncoder (HTM core implementation).
+        new_categories_allowed: If True, unseen categories get unique encodings
+            until capacity is exhausted, then fall back to unknown. If False,
+            all unseen categories map to the unknown encoding.
+        seed: Random seed for reproducible encodings.
         encoder_class: Reference to the CategoryEncoder class.
     """
 
@@ -206,14 +213,15 @@ class CategoryParametersNew:
     sparsity: float = 0.02
     size: int = 2048
     category_list: list[Any] = field(default_factory=list)
-    rdse_used: bool = True
+    new_categories_allowed: bool = False
+    seed: int = 42
     encoder_class = CategoryEncoderNew
 
 
 if __name__ == "__main__":
     categories = ["ES", "GB", "US"]
     parameters = CategoryParametersNew(
-        active_bits_per_category=0, category_list=categories, rdse_used=True
+        active_bits_per_category=0, category_list=categories
     )
     e = CategoryEncoderNew(parameters=parameters)
     a = e.encode("US")
