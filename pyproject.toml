@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "htm"
 version = "0.1.0"
@@ -23,3 +27,19 @@ dev = [
     "gymnasium[toy-text]>=1.2.3",
     "ipython>=9.11.0",
 ]
+
+# Installable layout: packages under src/ (PEP 420 namespaces) plus top-level modules.
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = [
+    "frozen_lake",
+    "gym_adapter",
+    "hot_gym",
+    "hot_gym_2level",
+    "manual_test",
+    "optimize",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = true
