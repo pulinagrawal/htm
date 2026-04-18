@@ -653,6 +653,9 @@ class ColumnField(Field):
         self._update_duty_cycles()
 
     def apical_compute(self, learn: bool = True) -> None:
+        if self.go_field is None or self.nogo_field is None:
+            return 
+
         self.select_learning_cells(segments_attr='go_segments',
                                    segment_factory=lambda cell: ApicalSegment(parent_cell=cell, field=self.go_field, sign=1))
         self.select_learning_cells(segments_attr='nogo_segments',
@@ -1101,26 +1104,24 @@ class OutputField(InputField):
         n = len(probabilities)
         mean_p = sum(probabilities) / n
 
-        best_value: Any | None = None
-        best_score = -float('inf')
-        best_encoding = None
-
+        # Score all candidates: mean-centered correlation between
+        # probabilities and each candidate's encoding.
+        scores = {}
         for candidate in search_values:
             encoding = self.encoder._encoding_cache.get(candidate)
             if encoding is None:
                 encoding = self.encoder.register_encoding(candidate)
-            # Score using mean-centered probabilities correlated with
-            # mean-centered encoding. This isolates the signal from the
-            # uniform baseline when probabilities are tightly distributed.
             mean_e = sum(encoding) / n
-            score = sum(
-                (p - mean_p) * (b - mean_e)
-                for p, b in zip(probabilities, encoding)
+            scores[candidate] = (
+                sum(
+                    (p - mean_p) * (b - mean_e)
+                    for p, b in zip(probabilities, encoding)
+                ),
+                encoding,
             )
-            if score > best_score:
-                best_score = score
-                best_value = candidate
-                best_encoding = encoding
+
+        best_value = max(scores, key=lambda k: scores[k][0])
+        best_score, best_encoding = scores[best_value]
 
         # Confidence: Pearson correlation between probabilities and the best
         # candidate's encoding. Measures how well the pattern of deviations
@@ -1135,4 +1136,5 @@ class OutputField(InputField):
         return {
             "value": best_value,
             "confidence": confidence,
+            "scores": scores,
         }
