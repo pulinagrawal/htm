@@ -125,6 +125,28 @@ class Field:
         """Return set of previously winning cells in the field."""
         return {cell for cell in self.cells if cell.prev_winner}
 
+    def state(self, states: str | Iterable[str] = "active") -> List[bool]:
+        """Return one or more cell state attributes as a dense binary vector.
+
+        Vector layout is state-major:
+            [state_1 for all cells | state_2 for all cells | ...]
+        """
+        if isinstance(states, str):
+            state_names = [states]
+        else:
+            state_names = list(states)
+
+        vector: List[bool] = []
+        for state_name in state_names:
+            for cell in self.cells:
+                if not hasattr(cell, state_name):
+                    raise ValueError(
+                        f"State '{state_name}' not found on cell type {type(cell).__name__}"
+                    )
+                vector.append(bool(getattr(cell, state_name)))
+
+        return vector
+
 # ===== Basic Building Blocks =====
 
 class Synapse:
@@ -944,7 +966,7 @@ class OutputField(InputField):
         go_gain: float = 1.0,
         nogo_gain: float = 1.0,
         connected_perm: float = CONNECTED_PERM,
-        decode_confidence_threshold: float = 0.5,
+        decode_confidence_threshold: float = 0.000001,
         random_action_picker: Callable[[list[Any]], Any] | None = None,
     ) -> None:
         if encoder_params is None:

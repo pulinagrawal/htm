@@ -153,11 +153,10 @@ class HTMVisualizer:
         self._external_mode = True
         self._step_requested = False
 
-        def _gate_step():
-            self._step_requested = True
-
+        # Wire playback through step_forward() so history navigation
+        # is respected during auto-play, not just manual RIGHT presses.
         self.playback = PlaybackController(
-            step_callback=_gate_step,
+            step_callback=self.step_forward,
             update_callback=lambda: None,
         )
         self.playback.step_back = self._step_back_history
@@ -562,13 +561,12 @@ class HTMVisualizer:
         self.playback.toggle_play(self.plotter)
 
     def step_forward(self):
-        # In start() mode, just release the gate — external loop does the stepping
-        if self._external_mode:
-            self._step_requested = True
-            return
         # First try to step forward in history if we've stepped back
         if self.history.can_step_forward:
             self._step_forward_history()
+        elif self._external_mode:
+            # At end of history — release the gate so external loop runs next step
+            self._step_requested = True
         else:
             # Only run a new simulation step if at end of history
             self._do_step()
