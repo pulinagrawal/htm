@@ -4,7 +4,7 @@ Encapsulates InputFields and ColumnFields to provide a unified API
 for encoding inputs and computing temporal memory in a single step.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from core.HTM import ColumnField, InputField, Field, OutputField
 from core.sungur import ValueField
@@ -59,6 +59,34 @@ class Brain:
         if name in self.fields:
             return self.fields[name]
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def _compute_fields_in_order(self) -> list[ColumnField]:
+        """Return compute-capable fields in dependency order."""
+        compute_fields: list[ColumnField] = list(self._column_fields.values()) + list(self._value_fields.values())
+        compute_field_ids = {id(field) for field in compute_fields}
+        ordered_fields: list[ColumnField] = []
+        visiting: set[int] = set()
+        visited: set[int] = set()
+
+        def visit(field: Field) -> None:
+            field_id = id(field)
+            if field_id in visited:
+                return
+            if field_id in visiting:
+                raise ValueError("Circular compute-field dependency detected")
+
+            visiting.add(field_id)
+            for input_field in getattr(field, "input_fields", []):
+                if id(input_field) in compute_field_ids:
+                    visit(cast(ColumnField, input_field))
+            visiting.remove(field_id)
+            visited.add(field_id)
+            ordered_fields.append(cast(ColumnField, field))
+
+        for field in compute_fields:
+            visit(field)
+
+        return ordered_fields
 
     def step(
         self,
@@ -126,10 +154,7 @@ class Brain:
         Args:
             learn: Whether to enable learning during this step.
         """
-        # TODO: No distinction between column and value fields right now
-        for field in self._column_fields.values():
-            field.compute(learn=learn)
-        for field in self._value_fields.values():
+        for field in self._compute_fields_in_order():
             field.compute(learn=learn)
     
     def compute_intrinsic_reward(self) -> float:

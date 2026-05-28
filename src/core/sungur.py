@@ -48,34 +48,35 @@ class ValueField(ColumnField):
         self._field = self
         self.values = [0.0] * len(self._field.cells)
         self.traces = [0.0] * len(self._field.cells)
-        self.td_learning_rate = 0.3
-        self.td_discount = 0.5
+        self.td_learning_rate = 0.5
+        self.td_discount = 0.95
         self.trace_decay = 0.6
         self.avg_error = 0.0
         self._weight_fn = weight_fn or ValueField._default_weight
 
     @staticmethod
-    def _default_weight(cell: Any) -> float:
+    def _default_weight(cell: Any, state: str) -> float:
         """Default weight for a cell based on HTM-like boolean states."""
-        if cell.prev_predictive and cell.active:  # Correct prediction
-            return 10.0
-        if not cell.prev_predictive and cell.active:  # False positive
-            return 1.0
+        if state == 'prev_active':
+            return 1.0 if cell.prev_active else 0.0
+        elif state == 'active':
+            return 1.0 if cell.active else 0.0
         return 0.0
 
-    def avg_value(self) -> float:
+    def avg_value(self, state: str='active') -> float:
         """Weighted average of per-cell value estimates."""
         return fmean(
-            self._weight_fn(cell) * v
+            self._weight_fn(cell, state) * v
             for cell, v in zip(self._field.cells, self.values)
         )
 
     def calculate_avg_error(self, reward: float) -> float:
-        avg_value = self.avg_value()
+        avg_value = self.avg_value('active')
+        prev_avg_value = self.avg_value('prev_active')
         # TODO: consider using per neuron errors instead of averaging.
         # This is a design choice: TD learning typically uses a single scalar error signal
         # But the thesis does it differently (refer to: https://claude.ai/share/72e97d45-7428-4185-b0fe-11052852f9be)
-        self.avg_error = fmean(reward + self.td_discount*avg_value-value
+        self.avg_error = fmean(reward + self.td_discount*avg_value-prev_avg_value
                                 for value in self.values)
 
     def update_values(self, reward) -> None:

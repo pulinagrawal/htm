@@ -449,6 +449,7 @@ class Column(Active, Predictive, Bursting):
             self._update_connected_synapses()
             self.overlap: float = 0.0
         self.active_duty_cycle: float = 0.0
+        self.boost: float = 1.0
         self.cells: List[Cell] = [
             Cell(
                 parent_column=self,
@@ -507,13 +508,13 @@ class Column(Active, Predictive, Bursting):
         """Compute overlap with current binary input vector."""
         self.overlap = sum(s.source_cell.active for s in self.connected_synapses)
 
-    def learn(self) -> None:
+    def learn(self, strength: float = 1.0) -> None:
       """Learn on proximal synapses based on current input."""
       for syn in self.potential_synapses:
           if syn.source_cell.active:
-              syn._adjust_permanence(increase=True)
+              syn._adjust_permanence(increase=True, strength=strength)
           else:
-              syn._adjust_permanence(increase=False)
+              syn._adjust_permanence(increase=False, strength=strength)
       self._update_connected_synapses()
 
 def best_potential_prev_active_segment(segments: List[Segment]) -> Optional[Segment]:
@@ -539,6 +540,10 @@ class ColumnField(Field):
         non_spatial: bool = False,
         non_temporal: bool = False,
         duty_cycle_period: int = DUTY_CYCLE_PERIOD,
+        active_boost: bool = False,
+        boost_strength: float = 4.0,
+        target_activation_density: float = DESIRED_LOCAL_SPARSITY,
+        local_area_density: float | None = None,
         go_field: 'ValueField|None' = None,
         nogo_field: 'ValueField|None' = None,
     ) -> None:
@@ -548,6 +553,12 @@ class ColumnField(Field):
         self.non_spatial = non_spatial
         self.non_temporal = non_temporal
         self.duty_cycle_period = max(1, duty_cycle_period)
+        self.active_boost = active_boost
+        self.boost_strength = max(0.0, boost_strength)
+        if local_area_density is not None:
+            target_activation_density = local_area_density
+        self.target_activation_density = min(1.0, max(0.0, target_activation_density))
+        self.local_area_density = self.target_activation_density
         self._duty_cycle_window = 0
         self._prev_winner_cells: Set[Cell] = set()
         self.go_field = go_field
@@ -650,6 +661,8 @@ class ColumnField(Field):
             for column in self.columns:
                 column.compute_overlap()
 
+            self.apply_spatial_pooling_boost()
+
             self.activate_columns()
 
             if learn:
@@ -691,7 +704,28 @@ class ColumnField(Field):
 
     def learn_columns(self) -> None:
         for column in self.active_columns:
-            column.learn()
+            column.learn(strength=column.boost)
+
+    def apply_spatial_pooling_boost(self) -> None:
+        """Apply thesis-style SP boosting from column activation duty cycles.
+
+        When disabled, boost is reset to 1.0 and overlaps are left unchanged.
+        When enabled, each column's overlap is scaled by:
+            exp(-boost_strength * (active_duty_cycle - target_activation_density))
+        """
+        if self.non_spatial:
+            return
+
+        if not self.active_boost:
+            for column in self.columns:
+                column.boost = 1.0
+            return
+
+        for column in self.columns:
+            column.boost = math.exp(
+                -self.boost_strength * (column.active_duty_cycle - self.target_activation_density)
+            )
+            column.overlap *= column.boost
 
     def activate_top_k_columns(self, k: int) -> None:
         """Activate the top-k columns based on overlap.

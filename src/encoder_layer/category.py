@@ -107,15 +107,15 @@ class CategoryEncoderNew(BaseEncoder[str]):
             if self._new_categories_allowed and len(self._category_encodings) - 1 < self._max_categories:
                 self._category_encodings[input_value] = self._allocate_slot()
                 self._category_list.append(input_value)
-                self.logger.info("Expanded category encoding for: %s", input_value)
+                # self.logger.info("Expanded category encoding for: %s", input_value)
             else:
                 sdr = list(self._category_encodings[None])
-                self.logger.info("Category encoded as unknown: %s", input_value)
+                # self.logger.info("Category encoded as unknown: %s", input_value)
                 self._encoding_cache[input_value] = sdr
                 return sdr
 
         sdr = list(self._category_encodings[input_value])
-        self.logger.info("Category encoded value: %s", input_value)
+        # self.logger.info("Category encoded value: %s", input_value)
         self._encoding_cache[input_value] = sdr
         return sdr
 
