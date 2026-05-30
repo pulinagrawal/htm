@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.python-version
 *.py[cod]
 *$py.class
 *.so
@@ -42,3 +43,10 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project-specific
+plots/
+.*/
+*.pdf
+profile.memray
+profile.pyspy
