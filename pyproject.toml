@@ -9,6 +9,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "gymnasium[box2d]>=1.2.3",
     "matplotlib>=3.10.8",
     "mmh3>=5.2.0",
     "numpy>=2.1.0",
@@ -26,6 +27,8 @@ dev = [
     "gymnasium>=1.2.3",
     "gymnasium[toy-text]>=1.2.3",
     "ipython>=9.11.0",
+    "scipy>=1.17.1",
+    "tabulate>=0.10.0",
 ]
 
 # Installable layout: packages under src/ (PEP 420 namespaces) plus top-level modules.
