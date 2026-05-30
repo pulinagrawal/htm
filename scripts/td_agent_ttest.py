@@ -28,7 +28,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from agents.td_agent import measure_steps  # noqa: E402
+from agents.td_agent_htm import measure_steps  # noqa: E402
 
 
 def welch_ttest_fallback(x: list[float], y: list[float]) -> tuple[float, float, float]:
