@@ -55,42 +55,75 @@ class ValueField(ColumnField):
         self._weight_fn = weight_fn or ValueField._default_weight
 
     @staticmethod
-    def _default_weight(cell: Any, state: str) -> float:
-        """Default weight for a cell based on HTM-like boolean states."""
-        if state == 'prev_active':
-            return 1.0 if cell.prev_active else 0.0
-        elif state == 'active':
-            return 1.0 if cell.active else 0.0
+    def _default_weight(cell: Any) -> float:
+        """State-value weight (Eq. 5.2).
+
+        A successfully predicted active cell weighs 10, a bursting active cell
+        weighs 1, an inactive cell weighs 0. A cell is "correctly predicted"
+        when it was predictive on the previous step and is active now
+        (``prev_predictive and active``); a cell active without a prior
+        prediction is bursting.
+        """
+        if cell.prev_predictive and cell.active:  # Correct prediction
+            return 10.0
+        if not cell.prev_predictive and cell.active:  # False positive
+            return 1.0
         return 0.0
 
-    def avg_value(self, state: str='active') -> float:
-        """Weighted average of per-cell value estimates."""
-        return fmean(
-            self._weight_fn(cell, state) * v
-            for cell, v in zip(self._field.cells, self.values)
+    def avg_value(self) -> float:
+        """Weighted state value (Eq. 5.2).
+
+        ``(sum_i Value_i * Weight_i) / n`` where ``n`` is the size of the
+        neural activation (the number of active cells), not the total cell
+        count. Inactive cells contribute nothing to numerator or denominator.
+        """
+        numerator = 0.0
+        n = 0
+        for cell, v in zip(self._field.cells, self.values):
+            active = cell.active 
+            if active:
+                n += 1
+                numerator += self._weight_fn(cell) * v
+        return numerator / n if n else 0.0
+
+    def calculate_avg_error(self, reward: float) -> None:
+        """TD error (Eq. 5.3).
+
+        ``AvgError = mean_i (R + gamma * AvgValue - Value_i)`` over the
+        *previous-state* neurons, where ``Value_i`` is each previous neuron's
+        stored value and ``AvgValue`` is the current (weighted) state value.
+        """
+        avg_value = self.avg_value()
+        prev_values = [v for cell, v in zip(self._field.cells, self.values)
+                       if cell.prev_active]
+        if not prev_values:
+            self.avg_error = 0.0
+            return
+        self.avg_error = fmean(
+            reward + self.td_discount * avg_value - value
+            for value in prev_values
         )
 
-    def calculate_avg_error(self, reward: float) -> float:
-        avg_value = self.avg_value('active')
-        prev_avg_value = self.avg_value('prev_active')
-        # TODO: consider using per neuron errors instead of averaging.
-        # This is a design choice: TD learning typically uses a single scalar error signal
-        # But the thesis does it differently (refer to: https://claude.ai/share/72e97d45-7428-4185-b0fe-11052852f9be)
-        self.avg_error = fmean(reward + self.td_discount*avg_value-prev_avg_value
-                                for value in self.values)
-
     def update_values(self, reward) -> None:
-        """Update value estimates for all cells based on current states."""
-        self.calculate_avg_error(reward=reward)
-        for i, cell in enumerate(self._field.cells):
+        """Per-cycle reward-layer update (Alg. 9 lines 15-19).
+
+        Order: decay traces -> compute error -> refresh traces -> update values.
+        """
+        self.decay_traces()                       # Eq. 5.1 (x gamma * lambda)
+        self.calculate_avg_error(reward=reward)   # Eq. 5.2 & 5.3
+        self.refresh_traces()                     # Eq. 5.4 (prev-active -> 1)
+        for i in range(len(self.values)):         # Eq. 5.5
             self.values[i] += self.td_learning_rate * self.avg_error * self.traces[i]
-        self.decay_traces()
 
     def decay_traces(self) -> None:
-        """Update trace values for all cells based on current cell states."""
+        """Eq. 5.1: decay every eligibility trace by gamma * lambda."""
+        decay = self.td_discount * self.trace_decay
+        for i in range(len(self.traces)):
+            self.traces[i] *= decay
+
+    def refresh_traces(self) -> None:
+        """Eq. 5.4: reset the traces of previously-active neurons to 1."""
         for i, cell in enumerate(self._field.cells):
-            if cell.active:
-                self.traces[i] = 1
-            else:
-                self.traces[i] *= self.td_discount*self.trace_decay
+            if cell.prev_active:
+                self.traces[i] = 1.0
     

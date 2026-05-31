@@ -311,25 +311,36 @@ class ApicalSegment(Segment):
         return self.sign * self.score()
 
     def adapt(self, strength: float=1.0) -> None:
-        """Adapt synapses using the field's TD error.
+        """Adapt apical synapses from the field's TD error (Eqs. 4.2 & 4.3).
 
-        Strengthens synapses to previously active cells when error sign
-        matches segment sign (Go strengthens on positive error,
-        NoGo strengthens on negative error).
+        Eq. 4.2 increment for previously-active synapses is signed by segment
+        polarity: D1 (Go, sign +1) strengthens on positive error and weakens
+        on negative; D2 (No-Go, sign -1) does the reverse. Eq. 4.3 decrements
+        non-active synapses by ``|error| * alpha * 2.0``. Both terms include
+        the TD learning rate ``alpha``.
         """
         td_error = self.field.avg_error
         # Go segments learn on positive error, NoGo on negative
 
         should_strengthen = (self.sign > 0 and td_error > 0) or (self.sign < 0 and td_error < 0)
-        if not should_strengthen:
+
+        if td_error == 0.0:
             return
 
-        dec_strength = abs(td_error) * 2.0
+        alpha = self.field.td_learning_rate
+        # Eq. 4.2: signed increment for previously-active synapses
+        # (negative => weaken on opposite-sign error).
+        inc = self.sign * td_error * alpha
+        # Eq. 4.3: decrement magnitude for non-active synapses.
+        dec = abs(td_error) * alpha * 2.0
+
         kept = []
         for syn in self.synapses:
-            increase = syn.source_cell.prev_active
-            s = abs(td_error) if increase else dec_strength
-            syn._adjust_permanence(increase=increase, strength=s*strength)
+            if syn.source_cell.prev_active:
+                if should_strengthen:
+                    syn._adjust_permanence(increase=True,  strength=inc * strength)
+                else:
+                    syn._adjust_permanence(increase=False, strength=dec * strength)
             if syn.permanence > 0.0:
                 kept.append(syn)
         self.synapses = kept
