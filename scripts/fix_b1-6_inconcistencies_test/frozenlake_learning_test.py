@@ -45,8 +45,8 @@ def build_small_brain(state_size, state_bits, cpc):
     for s in range(NUM_STATES):
         state.encoder.encode(s)
     col = ColumnField(input_fields=[state], non_spatial=True, cells_per_column=cpc)
-    go = ValueField(input_fields=[col], non_spatial=True, cells_per_column=cpc)
-    nogo = ValueField(input_fields=[col], non_spatial=True, cells_per_column=cpc)
+    go = ValueField(input_fields=[col], non_spatial=False, num_columns=2048, cells_per_column=cpc)
+    nogo = ValueField(input_fields=[col], non_spatial=False, num_columns=2048, cells_per_column=cpc)
     col.go_field = go
     col.nogo_field = nogo
     apar = CategoryParametersNew(size=32, active_bits_per_category=5,
@@ -78,7 +78,7 @@ def main():
         return int(v) if (v is not None and 0 <= int(v) < NUM_ACTIONS) else random.randint(0, NUM_ACTIONS - 1)
 
     agent = GymBrain(brain, o2i, b2a)
-    env = ContinuousFrozenLake(reward_schedule=(10, -10, -1),
+    env = ContinuousFrozenLake(reward_schedule=(1, -1, 0),
                                env=gym.make("FrozenLake-v1", is_slippery=False))
 
     obs, _ = env.reset()
