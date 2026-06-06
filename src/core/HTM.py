@@ -19,7 +19,18 @@ from encoder_layer.rdse import RDSEParameters
 # Constants
 CONNECTED_PERM = 0.5  # Permanence threshold for a synapse to be considered connected
 DESIRED_LOCAL_SPARSITY = 0.02  # Desired local sparsity for inhibition
-INITIAL_PERMANENCE = 0.21  # Initial permanence for new synapses
+# Newly grown distal/apical synapses start *below* the connected threshold and must ramp
+# up through learning (so a just-grown synapse can't fire a prediction before it has
+# learned anything).
+INITIAL_DISTAL_PERMANENCE = 0.21
+# Proximal (spatial-pooler) synapses instead initialize *centered on* the connected
+# threshold, jittered by +/- INITIAL_PROXIMAL_PERMANENCE_JITTER, so ~half of each column's
+# synapses start connected and columns are differentiated from step 0. Initializing them
+# disconnected (as the distal value does) leaves every column at overlap 0 at the start,
+# which under-decorrelates the SP output. See
+# scripts/columnfield_sp_td-learning/README.md.
+INITIAL_PROXIMAL_PERMANENCE = CONNECTED_PERM
+INITIAL_PROXIMAL_PERMANENCE_JITTER = 0.1
 PERMANENCE_INC = 0.20  # Amount by which synapses are incremented during learning
 PERMANENCE_DEC = 0.20  # Amount by which synapses are decremented during learning
 PREDICTED_DECREMENT_PCT = 0.1  # Fraction of permanence decrement for predicted but inactive segments
@@ -31,6 +42,15 @@ ACTIVATION_THRESHOLD_PCT = 0.5  # Activation threshold as a percentage of synaps
 LEARNING_THRESHOLD_PCT = 0.25  # Learning threshold as a percentage of synapses on segment
 
 debug = False
+
+
+def initial_proximal_permanence() -> float:
+    """Permanence for a new proximal synapse: jittered around the connected threshold."""
+    return random.uniform(
+        INITIAL_PROXIMAL_PERMANENCE - INITIAL_PROXIMAL_PERMANENCE_JITTER,
+        INITIAL_PROXIMAL_PERMANENCE + INITIAL_PROXIMAL_PERMANENCE_JITTER,
+    )
+
 
 def make_state_class(label: str):
     """Create a mixin that tracks current and previous boolean states for `label`."""
@@ -190,8 +210,15 @@ class DistalSynapse(Synapse):
         super().__init__(source_cell, permanence)
 
 class ProximalSynapse(Synapse):
-    """Proximal synapse connecting to an input bit."""
-    def __init__(self, source_cell: 'Cell', permanence: float=INITIAL_PERMANENCE) -> None:
+    """Proximal synapse connecting to an input bit.
+
+    When no permanence is given the synapse initializes jittered around the connected
+    threshold (``initial_proximal_permanence``) rather than disconnected, so a fresh
+    column has ~half its proximal synapses connected from step 0.
+    """
+    def __init__(self, source_cell: 'Cell', permanence: float | None = None) -> None:
+        if permanence is None:
+            permanence = initial_proximal_permanence()
         super().__init__(source_cell=source_cell, permanence=permanence)
 
 class Segment(Active, Learning, Matching):
@@ -274,7 +301,7 @@ class Segment(Active, Learning, Matching):
             random.shuffle(potential_cells)
             cells_to_connect = potential_cells[:growable_synapses]
             for cell in cells_to_connect:
-                new_syn = self.synapse_cls(source_cell=cell, permanence=INITIAL_PERMANENCE)
+                new_syn = self.synapse_cls(source_cell=cell, permanence=INITIAL_DISTAL_PERMANENCE)
                 self.synapses.append(new_syn)
 
     def weaken(self, strength=1.0) -> None:
