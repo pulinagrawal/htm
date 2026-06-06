@@ -1,0 +1,34 @@
+{
+  "config": {
+    "episodes": 3000,
+    "runs": 8,
+    "base_excitation": 4.0,
+    "encoder": "unique",
+    "alpha": 0.5,
+    "gamma": 0.95,
+    "lam": 0.6
+  },
+  "solved": true,
+  "greedy_success_mean": 1.0,
+  "greedy_success_std": 0.0,
+  "greedy_steps": 6.0,
+  "gonogo_gap_mean": 4.551967290669135,
+  "path_V": [
+    2.5686950839168645,
+    3.998340862161214,
+    5.510603138495796,
+    6.962921366374964,
+    5.424541660897876,
+    9.857990861404268,
+    0.0
+  ],
+  "optimal_path": [
+    0,
+    4,
+    8,
+    9,
+    13,
+    14,
+    15
+  ]
+}
