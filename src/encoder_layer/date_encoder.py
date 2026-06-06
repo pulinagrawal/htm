@@ -17,7 +17,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import override
+from typing import Any, override
 
 import pandas as pd
 
@@ -100,7 +100,7 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
 
         # call initialize
         self._initialize(self._date_params)
-        super().__init__(dimensions or [], self._size)
+        super().__init__(self._size)
 
     def _setup_feature_encoder(
         self,
@@ -450,6 +450,9 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
                     return 1.0 - diff / seconds_per_day
 
         return 0.0
+
+    def decode(self, input_sdr: list[int]) -> Any:
+        raise NotImplementedError("DateEncoder does not support decoding.")
 
     @staticmethod
     def mktime(year: int, mon: int, day: int, hr: int = 0, minute: int = 0, sec: int = 0) -> float:
