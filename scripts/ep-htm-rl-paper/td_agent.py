@@ -89,7 +89,7 @@ def measure_steps():
         # check if majority of last states are the same to detect plateau
         if len(last_states) == last_states.maxlen:
             most_common_state, count = collections.Counter(last_states).most_common(1)[0]
-            if count > 0.5 * last_states.maxlen and most_common_state == 15:
+            if count > 0.8 * last_states.maxlen and most_common_state == 15:
                 print(f"Plateau detected at state {most_common_state} with count {count}/{last_states.maxlen}")
                 print("Last states leading to plateau:", list(last_states))
                 print('ending step number:', i )

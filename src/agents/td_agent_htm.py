@@ -115,14 +115,14 @@ def binary_vector_to_number(vec):
         return State(vec)
     return '|'.join(str(i) for i, bit in enumerate(vec) if bit)
 
-def measure_run(episodic_memory=True, max_steps=1000, seed=None, verbose=False):
+def measure_run(episodic_memory=True, max_steps=1000, seed=None, verbose=True):
     global value_map, action_value_map
     value_map = defaultdict(lambda: 0)  # Maps state to value estimate
     action_value_map = defaultdict(lambda: 0)  # Maps (state, action) to value estimate
     if seed is not None:
         random.seed(seed)
     viz = False
-    genv = gym.make('FrozenLake-v1', is_slippery=False)#, render_mode='human')
+    genv = gym.make('FrozenLake-v1', is_slippery=False, map_name='8x8')#, render_mode='human')
     env = ContinuousFrozenLake(env=genv)
     if seed is not None:
         env.action_space.seed(seed)
@@ -175,7 +175,7 @@ def measure_run(episodic_memory=True, max_steps=1000, seed=None, verbose=False):
         # check if majority of last states are the same to detect plateau
         if len(last_states) == last_states.maxlen:
             most_common_state, count = collections.Counter(last_states).most_common(1)[0]
-            if count >= 0.5 * len(last_states) and most_common_state == 15:
+            if count >= 0.5 * len(last_states) and most_common_state == 63:
                 plateau_detected = True
                 if verbose:
                     print(f"Plateau detected at state {most_common_state} with count {count}/{last_states.maxlen}")
@@ -196,7 +196,7 @@ def measure_run(episodic_memory=True, max_steps=1000, seed=None, verbose=False):
     }
 
 
-def measure_steps(episodic_memory=True, max_steps=1000, seed=None, verbose=False):
+def measure_steps(episodic_memory=True, max_steps=1000, seed=None, verbose=True):
     return measure_run(
         episodic_memory=episodic_memory,
         max_steps=max_steps,

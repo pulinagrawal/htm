@@ -35,6 +35,7 @@ date_field = InputField(encoder_params=date_params)
 column_field = ColumnField(
     input_fields=[consumption_field], # add date_field to input fields for date encoding
     non_spatial=True,
+    active_boost=True,
     num_columns=config["num_columns"],
     cells_per_column=config["cells_per_column"],
 )

@@ -65,9 +65,9 @@ class ValueField(ColumnField):
         prediction is bursting.
         """
         if cell.prev_predictive and cell.active:  # Correct prediction
-            return 10.0
-        if not cell.prev_predictive and cell.active:  # False positive
             return 1.0
+        if not cell.prev_predictive and cell.active:  # False positive
+            return .2
         return 0.0
 
     def avg_value(self) -> float:
