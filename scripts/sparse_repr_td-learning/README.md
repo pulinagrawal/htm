@@ -79,6 +79,13 @@ This is the **value-only, fixed-policy** slice (the thesis D1/D2 layers learn a
   with an overlap-vs-distance diagnostic; writes `results_overlap_8x8.json` /
   `sparse_repr_overlap_8x8.png`.
 
+> **Stacking the HTM layers back on.** Two follow-on experiments add the next HTM layers
+> on top of this validated encoder→value substrate, each in its own self-contained folder:
+> [`../spatialpooler_td-learning/`](../spatialpooler_td-learning/) (encoder → **Spatial
+> Pooler** → value) and [`../tm_td-learning/`](../tm_td-learning/) (encoder → SP →
+> **Temporal Memory** → value). Both confirm the thesis TD(λ) update still recovers V^π on
+> the deeper representation.
+
 ## Run
 
 ```bash
