@@ -2,6 +2,7 @@ from itertools import chain
 import copy
 import math
 import random
+import warnings
 from typing import (
     Any,
     Callable,
@@ -38,7 +39,7 @@ GROWTH_STRENGTH = 0.5  # Fraction of max synapses to grow on a segment during le
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
 MAX_SYNAPSE_PCT = 0.02  # Max synapses as a percentage of distal field size
-ACTIVATION_THRESHOLD_PCT = 0.5  # Activation threshold as a percentage of synapses on segment
+ACTIVATION_THRESHOLD_PCT = 0.55  # Activation threshold as a percentage of synapses on segment
 LEARNING_THRESHOLD_PCT = 0.5  # Definitive experiments prove that learning threshold should not be lower than .5
 
 debug = False
@@ -609,6 +610,12 @@ class ColumnField(Field):
             self.cells_per_column = 1
         if self.non_spatial:
             num_columns = len(self.input_field.cells)
+            if self.num_columns and self.num_columns != num_columns:
+                warnings.warn(
+                    f"num_columns={self.num_columns} is ignored when non_spatial=True; "
+                    f"using input_fields total size ({num_columns}) instead.",
+                    stacklevel=3,
+                )
             self.columns: List[Column] = [
                 Column(
                     cells_per_column=self.cells_per_column,
