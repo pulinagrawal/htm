@@ -4,7 +4,7 @@ import math
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent))
+sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
 from core.HTM import ColumnField, InputField
 from core.brain import Brain
@@ -15,9 +15,9 @@ from visualizer import HTMVisualizer
 def build_sine_model():
     """Build a simple HTM model for sine wave prediction."""
     params = RDSEParameters(
-        size=128,
+        size=1000,
         sparsity=0.02,
-        resolution=0.1,
+        resolution=0.02,
         seed=42,
     )
     value_field = InputField(encoder_params=params)

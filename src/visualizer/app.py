@@ -32,7 +32,11 @@ class HTMVisualizer:
     def __init__(self, brain, input_sequence: Iterable[dict[str, Any]] | None = None,
                  step_fn: Callable | None = None,
                  agent_step_fn: Callable[[int], dict[str, Any]] | None = None,
-                 title: str = "HTM Visualizer"):
+                 title: str = "HTM Visualizer",
+                 cluster_field: str | None = None,
+                 cluster_views: list | None = None,
+                 cluster_threshold: float = 0.7,
+                 cluster_max_visible_steps: int = 200):
         self.brain = brain
         self.step_fn = step_fn
         self.agent_step_fn = agent_step_fn
@@ -82,6 +86,50 @@ class HTMVisualizer:
 
         self.plotter = None
 
+        # Optional cluster tracking. When a field + views are supplied the
+        # visualizer attaches a ClusterTracker to its History (so cluster
+        # assignments are captured on every step) and shows a matplotlib
+        # ClusterPanel that refreshes alongside the 3D display.
+        self._cluster_panel = None
+        self._cluster_max_visible_steps = cluster_max_visible_steps
+        if cluster_field and cluster_views:
+            self.add_cluster_tracker(
+                cluster_field, cluster_views, threshold=cluster_threshold,
+            )
+
+    def add_cluster_tracker(self, field_name: str, views: list,
+                            threshold: float = 0.7) -> None:
+        """Attach a ClusterTracker for a named column field.
+
+        Can be called before run()/start(). The matplotlib panel is created
+        lazily when the window opens so the tracker can also be attached
+        without a panel (e.g. for headless capture).
+        """
+        from src.clustering import ClusterTracker
+
+        tracker = ClusterTracker(
+            column_field=self.brain[field_name],
+            views=views,
+            threshold=threshold,
+        )
+        self.history.attach_cluster_tracker(field_name, tracker)
+        self._cluster_tracker = tracker
+
+    def _setup_cluster_panel(self) -> None:
+        """Create and show the matplotlib cluster panel, if a tracker exists."""
+        if getattr(self, "_cluster_tracker", None) is None:
+            return
+        import matplotlib.pyplot as plt
+
+        from .cluster_panel import ClusterPanel
+
+        self._cluster_panel = ClusterPanel(
+            self._cluster_tracker,
+            max_visible_steps=self._cluster_max_visible_steps,
+        )
+        plt.ion()
+        plt.show(block=False)
+
     def run(self):
         pv.global_theme.background = "black"
         pv.global_theme.font.color = "white"
@@ -120,6 +168,7 @@ class HTMVisualizer:
         self._add_widgets()
 
         self._reset_camera()
+        self._setup_cluster_panel()
         self._capture_snapshot({})
         self.plotter.show()
 
@@ -172,6 +221,7 @@ class HTMVisualizer:
         self._add_widgets()
 
         self._reset_camera()
+        self._setup_cluster_panel()
         self._capture_snapshot({})
         self.plotter.show(interactive_update=True)
 
@@ -293,6 +343,9 @@ class HTMVisualizer:
         self._update_stats_overlay()
         self._update_selection_overlay()
         self.plotter.render()
+
+        if self._cluster_panel is not None:
+            self._cluster_panel.update()
 
     def _step_back_history(self):
         if self.history.can_step_back:

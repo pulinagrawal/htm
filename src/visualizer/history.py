@@ -4,6 +4,8 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
+from src.clustering.cluster_tracker import ClusterTracker
+
 
 @dataclass
 class HTMSnapshot:
@@ -43,6 +45,9 @@ class HTMSnapshot:
     num_segments: dict[str, int] = field(default_factory=dict)
     num_synapses: dict[str, int] = field(default_factory=dict)
 
+    # Cluster assignments: {column_field_name: {view_name: cluster_id}}
+    cluster_assignments: dict[str, dict[str, int]] = field(default_factory=dict)
+
 
 class History:
     """Circular buffer of HTM snapshots for step-back navigation."""
@@ -51,6 +56,13 @@ class History:
         self.max_size = max_size
         self._buffer: list[HTMSnapshot] = []
         self._position: int = -1  # current viewing position
+        self._cluster_trackers: dict[str, ClusterTracker] = {}
+
+    def attach_cluster_tracker(
+        self, column_field_name: str, tracker: ClusterTracker
+    ) -> None:
+        """Attach a ClusterTracker to a named column field."""
+        self._cluster_trackers[column_field_name] = tracker
 
     def capture(self, brain, timestep: int, inputs: dict, predictions: dict) -> HTMSnapshot:
         """Capture current brain state into a snapshot."""
@@ -135,6 +147,14 @@ class History:
         if len(self._buffer) > self.max_size:
             self._buffer.pop(0)
         self._position = len(self._buffer) - 1
+
+        # Update cluster trackers and record assignments
+        for cf_name, tracker in self._cluster_trackers.items():
+            snap.cluster_assignments[cf_name] = tracker.step(
+                timestep=timestep,
+                input_fields=brain.all_input_fields,
+            )
+
         return snap
 
     @property
