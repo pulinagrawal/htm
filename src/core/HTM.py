@@ -39,7 +39,7 @@ RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for 
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
 MAX_SYNAPSE_PCT = 0.02  # Max synapses as a percentage of distal field size
 ACTIVATION_THRESHOLD_PCT = 0.5  # Activation threshold as a percentage of synapses on segment
-LEARNING_THRESHOLD_PCT = 0.25  # Learning threshold as a percentage of synapses on segment
+LEARNING_THRESHOLD_PCT = 0.5  # Definitive experiments prove that learning threshold should not be lower than .5
 
 debug = False
 
