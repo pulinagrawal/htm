@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import copy
 import math
+import numbers
 from dataclasses import dataclass
 from typing import Any, Iterable, override
 
-from encoder_layer.base_encoder import BaseEncoder, ParameterMarker
+from encoder_layer.base_encoder import DEFAULT_SPARSITY, BaseEncoder, ParameterMarker
 from log.log import get_logger, logger
 
 
@@ -141,10 +142,13 @@ class ScalarEncoder(BaseEncoder[int]):
     @override
     def encode(self, input_value: Any) -> list[int]:
         """Encode the input value into a binary vector."""
-        if type(input_value) is not int and type(input_value) is not float:
+        # Accept any real number (Python int/float as well as numpy scalars,
+        # e.g. values coming from pandas), but reject bools and non-numerics.
+        if isinstance(input_value, bool) or not isinstance(input_value, numbers.Real):
             raise ValueError("A scalar encoder can only encode floats or ints.")
+        input_value = float(input_value)
         self.register_encoding(input_value)
-        self.logger.info("Scalar encoded value: %s", input_value)
+        self.logger.debug("Scalar encoded value: %s", input_value)
         return self._compute_encoding(input_value)
 
     @override
@@ -178,7 +182,7 @@ class ScalarEncoder(BaseEncoder[int]):
         confidence = (
             best_overlap / self._active_bits if best_overlap >= 0 and self._active_bits else 0.0
         )
-        self.logger.info(
+        self.logger.debug(
             "Scalar decoded SDR into value: %s, with confidence: %s", best_value, confidence
         )
         return best_value, confidence
@@ -218,8 +222,9 @@ class ScalarEncoder(BaseEncoder[int]):
             raise ValueError("The minimum is not smaller than the maximum.")
         num_active_args = sum([parameters.active_bits > 0, parameters.sparsity > 0])
         if num_active_args == 0:
-            raise ValueError("Missing argument, need one of: 'active_bits', 'sparsity'")
-        if num_active_args != 1:
+            # Neither specified: default to 2% sparsity.
+            parameters.sparsity = DEFAULT_SPARSITY
+        if num_active_args > 1:
             raise ValueError("Specified both: 'active_bits', 'sparsity'. Specify only one of them.")
         num_size_args = sum(
             [
@@ -349,7 +354,7 @@ class ScalarEncoderParameters:
      * inputs will have unique / non-overlapping representations.
      */
     """
-    active_bits: int = 40
+    active_bits: int = 0
     """Number of active bits in the output SDR.
      * Member "activeBits" is the number of true bits in the encoded output SDR.
      * The output encodings will have a contiguous block of this many 1's.

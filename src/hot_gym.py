@@ -27,13 +27,15 @@ consumption_field = InputField(encoder_params=params)
 
 date_params = DateEncoderParameters(
     day_of_week_radius=1,
-    day_of_week_size=100,
+    day_of_week_sparsity=0.05,
+    day_of_week_size=200,
     time_of_day_radius=1,
-    time_of_day_size=100,
+    time_of_day_sparsity=0.05,
+    time_of_day_size=200,
 )
 date_field = InputField(encoder_params=date_params)
 column_field = ColumnField(
-    input_fields=[consumption_field], # add date_field to input fields for date encoding
+    input_fields=[consumption_field, date_field], # add date_field to input fields for date encoding
     non_spatial=True,
     active_boost=True,
     num_columns=config["num_columns"],
@@ -52,7 +54,7 @@ burst_counts = []
 
 for idx in tqdm(range(len(df)-500)):
     date = df["datetime"].iloc[idx]
-    # date_field.encode(date)
+    date_field.encode(date)
     consumption_field.encode(df["kw_energy_consumption"].iloc[idx])
     column_field.compute()
     burst_counts.append(len(column_field.bursting_columns))

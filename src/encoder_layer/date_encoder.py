@@ -129,6 +129,11 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
 
 
         """
+        # 'active_bits' and 'sparsity' are mutually exclusive in the sub-encoders.
+        # When a per-field sparsity is given, it takes precedence and we drop the
+        # (default) active_bits so the sub-encoder does not reject "both specified".
+        if sparsity > 0:
+            active_bits = 0
         encoder_params = {
             "size": size_value,
             "active_bits": active_bits,
@@ -139,13 +144,13 @@ class DateEncoder(BaseEncoder[datetime | pd.Timestamp | time.struct_time | None]
 
         if self._rdse_used:
             rdse_params = encoder_params.copy()
-            if active_bits <= 0:
+            if active_bits <= 0 and sparsity <= 0:
                 return None
             params = RDSEParameters(**rdse_params)
             encoder = RandomDistributedScalarEncoder(params)
         else:
             scalar_params = encoder_params.copy()
-            if active_bits <= 0:
+            if active_bits <= 0 and sparsity <= 0:
                 return None
             params = ScalarEncoderParameters(**scalar_params)
             encoder = ScalarEncoder(params)

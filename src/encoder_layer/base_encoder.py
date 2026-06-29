@@ -26,6 +26,10 @@ from typing import Any, Generic, Protocol, TypeVar, override, runtime_checkable
 
 T = TypeVar("T")
 
+# Default sparsity applied when an encoder is given neither 'active_bits' nor
+# 'sparsity'. Shared by all encoders so the default density is consistent.
+DEFAULT_SPARSITY = 0.02
+
 
 class BaseEncoder(ABC, Generic[T]):
     """Abstract base class for all encoder implementations.

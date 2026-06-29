@@ -25,7 +25,7 @@ def _make_large_encoder(radius: float = 1.0) -> RandomDistributedScalarEncoder:
     params = RDSEParameters(
         size=10000,
         sparsity=0.02,
-        category=True,
+        radius=radius,
         seed=12345,
     )
     return RandomDistributedScalarEncoder(params)
@@ -61,28 +61,38 @@ def test_decode_closest_works_with_candidates_only():
 def test_clear_registered_encodings_resets_cache():
     encoder = _make_encoder()
     encoder.register_encoding(0.25)
-    encoder.clear_registered_encodings()
+    # Decoding against a populated cache resolves to the registered value.
+    sdr = encoder._compute_encoding(0.25)
+    assert encoder.decode(sdr)[0] == pytest.approx(0.25)
 
-    with pytest.raises(ValueError):
-        encoder.decode(encoder.encode(0.25))
+    encoder.clear_registered_encodings()
+    # With the cache cleared and no candidates, decode has nothing to match.
+    # (encode() must NOT be used here: it re-registers the value via register_encoding.)
+    value, confidence = encoder.decode(sdr)
+    assert value is None
+    assert confidence == 0.0
 
 
 def test_rdse_overlap_within_radius_large_encoding():
+    # w = 0.02 * 10000 = 200 active bits; separation 0.4 (< radius 1.0) gives
+    # structural overlap ~ w * (1 - 0.4/radius) = 120.
     encoder = _make_large_encoder(radius=1.0)
     values = [i * 0.1 for i in range(200)]
     for value in values:
         within = value + 0.4
         overlap = _overlap_count(encoder.encode(value), encoder.encode(within))
-        assert overlap > 0
+        assert overlap > 100
 
 
 def test_rdse_no_overlap_outside_radius_large_encoding():
+    # Separation 5.0 (>> radius 1.0) gives no structural overlap; only the random
+    # collision floor (w^2/n = 4) remains, so overlap stays well below 0.1*w = 20.
     encoder = _make_large_encoder(radius=1.0)
     values = [i for i in range(200)]
     for value in values:
         outside = value + 5.0
         overlap = _overlap_count(encoder.encode(value), encoder.encode(outside))
-        assert overlap < 5
+        assert overlap < 20
 
 
 def test_rdse_encodings_are_mostly_orthogonal():

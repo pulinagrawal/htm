@@ -136,14 +136,18 @@ def build_agent() -> GymBrain:
     return GymBrain(brain, obs_to_inputs, behavior_to_action)
 
 
-def run_episode(agent: GymBrain, env: gym.Env, learn: bool = True) -> tuple[float, int]:
+def run_episode(agent: GymBrain, env: gym.Env, learn: bool = True, last_reward=0) -> tuple[float, int]:
     """Run a single FrozenLake episode."""
     obs, _ = env.reset()
-    total_reward = 0.0
+    episode_start = True
+    total_reward = last_reward
 
     for step in range(MAX_STEPS_PER_EPISODE):
         action = agent.step(obs, reward=total_reward, learn=learn)
         obs, reward, terminated, truncated, _ = env.step(action)
+        if episode_start:
+            total_reward = 0.0  # Reset total reward at the start of the episode
+            episode_start = False
         total_reward += float(reward)
 
         if terminated or truncated:
@@ -166,9 +170,10 @@ def main(viz: bool = False) -> None:
     wins = 0
     recent_wins = 0
     recent_window = PRINT_EVERY
+    reward = 0.0
 
     for episode in range(1, NUM_EPISODES + 1):
-        reward, steps = run_episode(agent, env, learn=True)
+        reward, steps = run_episode(agent, env, learn=True, last_reward=reward)
         if reward > 0:
             wins += 1
             recent_wins += 1

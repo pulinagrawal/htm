@@ -12,7 +12,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any, Iterable, override
 
-from encoder_layer.base_encoder import BaseEncoder, ParameterMarker
+from encoder_layer.base_encoder import DEFAULT_SPARSITY, BaseEncoder, ParameterMarker
 from log.log import get_logger, logger
 
 
@@ -38,10 +38,20 @@ class CategoryEncoderNew(BaseEncoder[str]):
 
         self.size = self._parameters.size
 
-        if self._parameters.sparsity != 0:
-            self._active_bits = int(round(self.size * self._parameters.sparsity))
+        sparsity = self._parameters.sparsity
+        active_bits_per_category = self._parameters.active_bits_per_category
+        if sparsity > 0 and active_bits_per_category > 0:
+            raise ValueError(
+                "Specified both: 'sparsity', 'active_bits_per_category'. Specify only one of them."
+            )
+        if sparsity == 0 and active_bits_per_category == 0:
+            # Neither specified: default to 2% sparsity.
+            sparsity = DEFAULT_SPARSITY
+
+        if sparsity > 0:
+            self._active_bits = int(round(self.size * sparsity))
         else:
-            self._active_bits = self._parameters.active_bits_per_category
+            self._active_bits = active_bits_per_category
 
         if self._active_bits <= 0:
             raise ValueError("active_bits must be positive (set sparsity or active_bits_per_category)")
@@ -210,7 +220,7 @@ class CategoryParametersNew:
     """
 
     active_bits_per_category: int = 0
-    sparsity: float = 0.02
+    sparsity: float = 0.0
     size: int = 2048
     category_list: list[Any] = field(default_factory=list)
     new_categories_allowed: bool = False

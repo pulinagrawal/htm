@@ -1,4 +1,5 @@
 import copy
+import math
 import random
 import struct
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from encoder_layer.base_encoder import BaseEncoder
+from encoder_layer.base_encoder import DEFAULT_SPARSITY, BaseEncoder
 
 """Parameters for the RandomDistributedScalarEncoder (RDSE).
 
@@ -104,7 +105,7 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
 
         data = [0] * self.size
 
-        index = int(input_value / self._resolution)
+        index = math.floor(input_value / self._resolution)
 
         for offset in range(self._active_bits):
             hash_buffer = index + offset
@@ -130,9 +131,11 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
         if parameters.sparsity > 0:
             num_active_args += 1
 
-        assert num_active_args != 0, "Missing argument, need one of: 'activeBits' or 'sparsity'."
+        if num_active_args == 0:
+            # Neither specified: default to 2% sparsity.
+            parameters.sparsity = DEFAULT_SPARSITY
         assert (
-            num_active_args == 1
+            num_active_args <= 1
         ), "Too many arguments, choose only one of: 'activeBits' or 'sparsity'."
 
         num_resolution_args = 0
