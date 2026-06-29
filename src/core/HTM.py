@@ -22,7 +22,7 @@ DESIRED_LOCAL_SPARSITY = 0.02  # Desired local sparsity for inhibition
 # Newly grown distal/apical synapses start *below* the connected threshold and must ramp
 # up through learning (so a just-grown synapse can't fire a prediction before it has
 # learned anything).
-INITIAL_DISTAL_PERMANENCE = 0.21
+INITIAL_DISTAL_PERMANENCE = 0.41
 # Proximal (spatial-pooler) synapses instead initialize *centered on* the connected
 # threshold, jittered by +/- INITIAL_PROXIMAL_PERMANENCE_JITTER, so ~half of each column's
 # synapses start connected and columns are differentiated from step 0. Initializing them
@@ -31,8 +31,8 @@ INITIAL_DISTAL_PERMANENCE = 0.21
 # scripts/columnfield_sp_td-learning/README.md.
 INITIAL_PROXIMAL_PERMANENCE = CONNECTED_PERM
 INITIAL_PROXIMAL_PERMANENCE_JITTER = 0.1
-PERMANENCE_INC = 0.20  # Amount by which synapses are incremented during learning
-PERMANENCE_DEC = 0.20  # Amount by which synapses are decremented during learning
+PERMANENCE_INC = 0.10  # Amount by which synapses are incremented during learning
+PERMANENCE_DEC = 0.10  # Amount by which synapses are decremented during learning
 PREDICTED_DECREMENT_PCT = 0.1  # Fraction of permanence decrement for predicted but inactive segments
 GROWTH_STRENGTH = 0.5  # Fraction of max synapses to grow on a segment during learning
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
@@ -1042,6 +1042,9 @@ class OutputField(InputField):
         random_action_picker: Callable[[list[Any]], Any] | None = None,
     ) -> None:
         if encoder_params is None:
+            # TODO The two lines below are a hack to get the encoder size from the input field if not provided. 
+            # They may not be senisble hack either.
+            # Ideally, the encoder should be passed in explicitly.
             encoder_size = size if size is not None else max(1, len(input_field.cells))
             active_bits = max(1, min(16, encoder_size))
             encoder_params = RDSEParameters(
