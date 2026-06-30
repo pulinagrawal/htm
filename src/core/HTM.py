@@ -247,12 +247,12 @@ class Segment(Active, Learning, Matching):
         self.learning_threshold_connected_pct: float = LEARNING_THRESHOLD_PCT
 
     def is_active(self) -> bool:
-        connected_synapses = [syn for syn in self.synapses if syn.active]
-        return len(connected_synapses) > self.activation_threshold*len(self.synapses)
+        active_synapses = [syn for syn in self.synapses if syn.active]
+        return len(active_synapses) > self.activation_threshold*len(self.synapses)
 
     def is_potentially_active(self) -> bool:
-        connected_synapses = [syn for syn in self.synapses if syn.potentially_active]
-        return len(connected_synapses) > self.learning_threshold_connected_pct*len(self.synapses)
+        active_synapses = [syn for syn in self.synapses if syn.potentially_active]
+        return len(active_synapses) > self.learning_threshold_connected_pct*len(self.synapses)
 
     def potential_prev_active_synapses(self) -> int:
         """Return count of previously active synapses, regardless of permanence."""
@@ -1011,7 +1011,7 @@ class InputField(Field):
                 cell.set_active()
         return encoded_bits
 
-    def decode(self, state :str='active', encoded: Field=None, candidates: Iterable[float] | None = None) -> Tuple[float | None]:
+    def decode(self, state :str='active', encoded: Field=None, candidates: Iterable[float] | None = None) -> Tuple[float | None, float]:
         """Convert active cells back to input value using RDSE decoding."""
         if state not in ('active', 'predictive'):
             raise ValueError(f"Invalid state '{state}'; must be 'active' or 'predictive'")
