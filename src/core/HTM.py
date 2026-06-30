@@ -35,13 +35,12 @@ INITIAL_PROXIMAL_PERMANENCE_JITTER = 0.1
 PERMANENCE_INC = 0.10  # Amount by which synapses are incremented during learning
 PERMANENCE_DEC = 0.10  # Amount by which synapses are decremented during learning
 PREDICTED_DECREMENT_PCT = 0.1  # Fraction of permanence decrement for predicted but inactive segments
-GROWTH_STRENGTH = 0.5  # Fraction of max synapses to grow on a segment during learning
+GROWTH_STRENGTH = 0.75  # Fraction of max synapses to grow on a segment during learning
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
-MAX_SYNAPSE_PCT = 0.02  # Max synapses as a percentage of distal field size
+#MAX_SYNAPSE_PCT = 0.0006  # Max synapses as a percentage of distal field size
 ACTIVATION_THRESHOLD_PCT = 0.55  # Activation threshold as a percentage of synapses on segment
 LEARNING_THRESHOLD_PCT = 0.50  # Definitive experiments prove that learning threshold should not be lower than .5
-
 debug = False
 
 
@@ -230,14 +229,19 @@ class Segment(Active, Learning, Matching):
         parent_cell: 'Cell',
         field: 'Field|None' = None,
         synapses: Optional[List[Synapse]] = None,
-        synapse_cls = DistalSynapse
+        synapse_cls = DistalSynapse,
+        expected_field_activation: Optional[int] = None
     ) -> None:
         super().__init__()
         self.parent_cell: 'Cell' = parent_cell
         self.field: 'Field' = field if field is not None else parent_cell.distal_field
         self.synapses: List[Synapse] = synapses if synapses is not None else []
         self.sequence_segment: bool = False  # True if learned in a predictive context
-        self.max_synapses = int(MAX_SYNAPSE_PCT * len(self.field.cells))
+        
+        if expected_field_activation is None:
+            expected_field_activation = len(self.field.cells)
+        self.max_synapses = int(expected_field_activation)
+        
         self.synapse_cls = synapse_cls
         global debug
         if debug:
@@ -248,11 +252,11 @@ class Segment(Active, Learning, Matching):
 
     def is_active(self) -> bool:
         active_synapses = [syn for syn in self.synapses if syn.active]
-        return len(active_synapses) > self.activation_threshold*len(self.synapses)
+        return len(active_synapses) > self.activation_threshold * self.max_synapses
 
     def is_potentially_active(self) -> bool:
         active_synapses = [syn for syn in self.synapses if syn.potentially_active]
-        return len(active_synapses) > self.learning_threshold_connected_pct*len(self.synapses)
+        return len(active_synapses) > self.learning_threshold_connected_pct * self.max_synapses
 
     def potential_prev_active_synapses(self) -> int:
         """Return count of previously active synapses, regardless of permanence."""
@@ -721,7 +725,7 @@ class ColumnField(Field):
             self.activate_cells()
 
             if learn:
-                self.select_learning_cells(segment_factory=lambda cell: Segment(parent_cell=cell))
+                self.select_learning_cells(segment_factory=lambda cell: Segment(parent_cell=cell, expected_field_activation=self.num_columns*self.target_activation_density))
 
             self.depolarize()
 
