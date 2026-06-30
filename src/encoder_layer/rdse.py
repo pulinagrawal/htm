@@ -91,7 +91,13 @@ class RandomDistributedScalarEncoder(BaseEncoder[float]):
                 best_overlap = overlap
                 best_value = candidate
 
-        confidence = best_overlap / self._active_bits if best_overlap >= 0 and self._active_bits else 0.0
+        # No overlap with any candidate means the SDR carries no usable prediction.
+        # Returning the (insertion-order) first candidate here would fabricate a
+        # spurious value, so report "no prediction" instead.
+        if best_overlap <= 0:
+            return None, 0.0
+
+        confidence = best_overlap / self._active_bits if self._active_bits else 0.0
         return best_value, confidence
 
     def clear_registered_encodings(self) -> None:
