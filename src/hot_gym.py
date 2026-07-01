@@ -11,14 +11,14 @@ from encoder_layer.rdse import RDSEParameters
 from encoder_layer.date_encoder import DateEncoderParameters    
 
 config = {
-    "num_columns": 1024,
+    "num_columns": 2048,
     "cells_per_column": 32,
-    "radius": .5,
+    "radius": 2,
     "rdse_seed": 5,
 }
 
 params = RDSEParameters(
-    size=config["num_columns"],
+    size=config["num_columns"]-800,
     sparsity=0.02,
     radius=config["radius"],
     seed=config["rdse_seed"],
@@ -27,17 +27,16 @@ consumption_field = InputField(encoder_params=params)
 
 date_params = DateEncoderParameters(
     day_of_week_radius=1,
-    day_of_week_sparsity=0.05,
-    day_of_week_size=200,
+    day_of_week_sparsity=0.02,
+    day_of_week_size=100,
     time_of_day_radius=1,
-    time_of_day_sparsity=0.05,
-    time_of_day_size=200,
+    time_of_day_sparsity=0.02,
+    time_of_day_size=700,
 )
 date_field = InputField(encoder_params=date_params)
 column_field = ColumnField(
     input_fields=[consumption_field, date_field], # add date_field to input fields for date encoding
     non_spatial=True,
-    active_boost=True,
     num_columns=config["num_columns"],
     cells_per_column=config["cells_per_column"],
 )
@@ -69,6 +68,10 @@ actual_values = []
 predicted_values = []
 decode_map = []
 
+# When the decoder returns no prediction (empty/non-overlapping predictive SDR),
+# count it as the worst possible error: the full range of observed consumption.
+max_error = df["kw_energy_consumption"].max() - df["kw_energy_consumption"].min()
+
 for idx in tqdm(range(500)):
     index = (len(df)-500)+idx
     date = df["datetime"].iloc[index]
@@ -76,7 +79,10 @@ for idx in tqdm(range(500)):
     date_field.encode(date)
     prediction, confidence = consumption_field.decode('predictive')
     decode_map.append((prediction, consumption_field.bit_vector))
-    errors.append(abs(value - prediction))
+    if prediction is None:
+        errors.append(max_error)
+    else:
+        errors.append(abs(value - prediction))
     actual_values.append(value)
     predicted_values.append(prediction)
     consumption_field.encode(value)

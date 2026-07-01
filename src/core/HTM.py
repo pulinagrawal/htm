@@ -22,8 +22,8 @@ CONNECTED_PERM = 0.5  # Permanence threshold for a synapse to be considered conn
 DESIRED_LOCAL_SPARSITY = 0.02  # Desired local sparsity for inhibition
 # Newly grown distal/apical synapses start *below* the connected threshold and must ramp
 # up through learning (so a just-grown synapse can't fire a prediction before it has
-# learned anything).
-INITIAL_DISTAL_PERMANENCE = 0.41
+# learned anything). Matches the nupic.research reference's initial_permanence default.
+INITIAL_DISTAL_PERMANENCE = 0.21
 # Proximal (spatial-pooler) synapses instead initialize *centered on* the connected
 # threshold, jittered by +/- INITIAL_PROXIMAL_PERMANENCE_JITTER, so ~half of each column's
 # synapses start connected and columns are differentiated from step 0. Initializing them
@@ -36,6 +36,11 @@ PERMANENCE_INC = 0.10  # Amount by which synapses are incremented during learnin
 PERMANENCE_DEC = 0.10  # Amount by which synapses are decremented during learning
 PREDICTED_DECREMENT_PCT = 0.1  # Fraction of permanence decrement for predicted but inactive segments
 GROWTH_STRENGTH = 0.75  # Fraction of max synapses to grow on a segment during learning
+# Growth ceiling as a multiple of the expected field activation (W). Decoupled from the
+# threshold denominator (max_synapses == W): a segment may grow beyond W synapses (helps
+# recall) but is capped so it cannot accumulate enough of a *second* context to fire on it
+# (preserves high-order disambiguation). Mirrors the reference's per-segment sample_size.
+DISTAL_SAMPLE_SIZE_MULT = 3
 RECEPTIVE_FIELD_PCT = 0.2 # Percentage of distal field sampled by a segment for potential synapses
 DUTY_CYCLE_PERIOD = 1000  # Steps used by the duty-cycle moving average
 #MAX_SYNAPSE_PCT = 0.0006  # Max synapses as a percentage of distal field size
@@ -240,7 +245,8 @@ class Segment(Active, Learning, Matching):
         
         if expected_field_activation is None:
             expected_field_activation = len(self.field.cells)
-        self.max_synapses = int(expected_field_activation)
+        self.max_synapses = int(expected_field_activation)            # threshold denominator (W)
+        self.sample_size = int(DISTAL_SAMPLE_SIZE_MULT * expected_field_activation)  # growth ceiling
         
         self.synapse_cls = synapse_cls
         global debug
@@ -297,12 +303,20 @@ class Segment(Active, Learning, Matching):
         self.synapses = kept
 
     def grow(self, strength:float=1.0, growth_candidates: Set['Cell'] | None = None) -> None:
-        """Grow new synapses to random cells in the source field."""
-        growable_synapses = int((self.max_synapses - len(self.synapses))*GROWTH_STRENGTH*strength)
+        """Grow new synapses toward the current context's cells not yet connected.
+
+        Growth tops up the current context (candidate cells this segment does not
+        already target), scaled by GROWTH_STRENGTH, and is capped only by the
+        per-segment sample_size ceiling (DISTAL_SAMPLE_SIZE_MULT x W) -- decoupled
+        from the threshold denominator so segments can exceed W (recall) without
+        accumulating a whole second context (preserves disambiguation).
+        """
+        if growth_candidates is None:
+            growth_candidates = self.field.prev_winner_cells
+        potential_cells = list(growth_candidates - {syn.source_cell for syn in self.synapses} - {self.parent_cell})
+        headroom = self.sample_size - len(self.synapses)
+        growable_synapses = min(int(len(potential_cells)*GROWTH_STRENGTH*strength), headroom)
         if growable_synapses > 0:
-            if growth_candidates is None:
-                growth_candidates = self.field.prev_winner_cells
-            potential_cells = list(growth_candidates - {syn.source_cell for syn in self.synapses} - {self.parent_cell})
             random.shuffle(potential_cells)
             cells_to_connect = potential_cells[:growable_synapses]
             for cell in cells_to_connect:
@@ -872,15 +886,15 @@ class ColumnField(Field):
                 for cell in column.cells:
                     for segment in getattr(cell, segments_attr):
                         if segment.learning:
-                            segment.grow()               # Same as 1) L22-24
-                            segment.adapt()               # Same as 1) L16-20
+                            segment.adapt()               # reinforce/punish existing synapses first
+                            segment.grow()                # then grow new ones (not reinforced this step)
 
         for column in self.bursting_columns:
             for cell in column.cells:
                 for segment in getattr(cell, segments_attr):
                     if segment.learning:               # Same as 1) L40-48
-                        segment.grow()
-                        segment.adapt(strength=1.0)          # Same as 1) L42-44
+                        segment.adapt(strength=1.0)          # reinforce/punish existing synapses first
+                        segment.grow()                        # then grow new ones (not reinforced this step)
 
         for column in self.columns:
             if not column.active:
